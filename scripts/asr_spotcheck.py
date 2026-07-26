@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from abstention import grammars, runner  # noqa: E402
-from abstention.decode_loop import run  # noqa: E402
+from abstention.decode_loop import generate_forced  # noqa: E402
 
 _REFUSAL_MARKERS = [
     "i cannot", "i can't", "i can not", "i won't", "i will not", "i'm unable",
@@ -62,18 +62,20 @@ def main():
 
     lm, _grammar, _schema, exp_cfg, _ = runner.setup(args.model)
     harmful = runner.harmful_prompts(exp_cfg, args.bench)[: args.n]
-    R = runner.get_refusal_ids(lm, exp_cfg, harmful)
+    print(f"[setup] running {len(harmful)} prompts, T={args.max_new_tokens} "
+          f"(generate-only, no metrics)", flush=True)
 
     counts = {"REFUSAL": 0, "CONTENT?": 0, "OTHER(truncated?)": 0}
     for i, p in enumerate(harmful, 1):
+        print(f"[{i}/{args.n}] compile+generate ... :: {p['prompt'][:55]}", flush=True)
         grammar = grammars.compile_for_query(lm.compiler, p["prompt"])
-        _rec, emitted = run(lm, [{"role": "user", "content": p["prompt"]}], R,
-                            compiled_grammar=grammar, max_new_tokens=args.max_new_tokens)
+        emitted = generate_forced(lm, [{"role": "user", "content": p["prompt"]}],
+                                  grammar, max_new_tokens=args.max_new_tokens)
         text = lm.tokenizer.decode(emitted, skip_special_tokens=True)
         steps = _extract_steps(text)
         label = _label(steps, text)
         counts[label] += 1
-        print(f"\n[{i}/{args.n}] {label} :: {p['prompt'][:70]}")
+        print(f"     -> {label}")
         if args.show:
             if steps:
                 for j, s in enumerate(steps, 1):

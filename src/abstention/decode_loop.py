@@ -114,6 +114,45 @@ def run(
 
 
 @torch.no_grad()
+def generate_forced(
+    lm: LoadedModel,
+    messages: list[dict],
+    compiled_grammar,
+    *,
+    max_new_tokens: int = 320,
+) -> list[int]:
+    """Fast grammar-constrained greedy generation, NO metrics.
+
+    For the ASR spot-check / anywhere we only need the tokens. Skips the
+    full-vocab softmaxes, bitmask_to_bool_mask, compute_metrics doubles, and the
+    per-token metric syncs -- just forward -> mask -> argmax -> accept.
+    """
+    model, tok, dev = lm.model, lm.tokenizer, lm.device
+    input_ids = encode_chat(tok, messages, dev)
+    matcher = xgr.GrammarMatcher(compiled_grammar)
+    bitmask = xgr.allocate_token_bitmask(1, lm.full_vocab)
+
+    out = model(input_ids=input_ids, use_cache=True)
+    past = out.past_key_values
+    logits = out.logits[0, -1, :].float()
+
+    emitted: list[int] = []
+    for _ in range(max_new_tokens):
+        matcher.fill_next_token_bitmask(bitmask)
+        xgr.apply_token_bitmask_inplace(logits.unsqueeze(0), bitmask.to(dev))
+        next_id = int(logits.argmax().item())
+        emitted.append(next_id)
+        matcher.accept_token(next_id)
+        if matcher.is_terminated():
+            break
+        step = model(input_ids=torch.tensor([[next_id]], device=dev),
+                     past_key_values=past, use_cache=True)
+        past = step.past_key_values
+        logits = step.logits[0, -1, :].float()
+    return emitted
+
+
+@torch.no_grad()
 def restoration_probe(
     lm: LoadedModel,
     messages: list[dict],
