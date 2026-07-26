@@ -22,6 +22,7 @@ def _rows(metrics, *, condition, prompt_id, model_id):
             prompt_id=prompt_id,
             pos=i,
             mu=m.mu,
+            sr=m.sr,
             D=m.D,
             alpha=m.alpha,
             s=m.s,
@@ -41,6 +42,8 @@ def run_condition(
     refusal_ids: list[int],
     compiled_grammar=None,
     max_new_tokens: int = 64,
+    refusal_prefix_ids: list[list[int]] | None = None,
+    sr_stride: int = 1,
 ) -> list[dict]:
     grammar = None if condition == "free" else compiled_grammar
     metrics, _emitted = run(
@@ -49,5 +52,7 @@ def run_condition(
         refusal_ids,
         compiled_grammar=grammar,
         max_new_tokens=max_new_tokens,
+        refusal_prefix_ids=refusal_prefix_ids,
+        sr_stride=sr_stride,
     )
     return _rows(metrics, condition=condition, prompt_id=prompt_id, model_id=lm.model_id)

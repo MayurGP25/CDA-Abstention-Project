@@ -38,19 +38,21 @@ def main():
         harmful, benign = harmful[: args.n], benign[: args.n]
 
     refusal_ids = runner.get_refusal_ids(lm, exp_cfg, harmful)
+    prefix_ids = runner.get_refusal_prefix_ids(lm)
+    stride = runner.sr_stride(exp_cfg)
     T = exp_cfg["max_new_tokens"]
+
+    def _run(cond, p, grammar_=None):
+        return run_condition(lm, condition=cond, prompt=p["prompt"], prompt_id=p["id"],
+                             refusal_ids=refusal_ids, compiled_grammar=grammar_,
+                             max_new_tokens=T, refusal_prefix_ids=prefix_ids, sr_stride=stride)
 
     rows: list[dict] = []
     for p in tqdm(harmful, desc="harmful"):
-        rows += run_condition(lm, condition="free", prompt=p["prompt"],
-                              prompt_id=p["id"], refusal_ids=refusal_ids, max_new_tokens=T)
-        rows += run_condition(lm, condition="harmful_forced", prompt=p["prompt"],
-                              prompt_id=p["id"], refusal_ids=refusal_ids,
-                              compiled_grammar=grammar, max_new_tokens=T)
+        rows += _run("free", p)
+        rows += _run("harmful_forced", p, grammar)
     for p in tqdm(benign, desc="benign"):
-        rows += run_condition(lm, condition="benign_forced", prompt=p["prompt"],
-                              prompt_id=p["id"], refusal_ids=refusal_ids,
-                              compiled_grammar=grammar, max_new_tokens=T)
+        rows += _run("benign_forced", p, grammar)
 
     out = runner.results_dir(args.exp) / f"{args.model}__{args.bench}.parquet"
     pd.DataFrame(rows).to_parquet(out)

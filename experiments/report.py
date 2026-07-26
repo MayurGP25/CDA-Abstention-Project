@@ -33,6 +33,14 @@ def report(parquet, mu_threshold=0.1):
         else:
             print(f"E1  mean mu_0 (harmful_forced) = {hf0.mean():.3f}")
 
+        # E1 (sequence-level): mean S_R at t=0 -- the defensible decision-point signal.
+        if "sr" in dm.columns:
+            sr0 = dm[(dm.condition == "harmful_forced") & (dm.pos == 0)]["sr"].dropna()
+            if len(sr0):
+                import numpy as _np
+                print(f"E1  mean S_R(t=0) = {sr0.mean():.3f} logprob "
+                      f"(refusal prob mass ~ {float(_np.exp(sr0).mean()):.3f})")
+
         # E2 -- persistence depth: first t where mean mu (harmful_forced) < threshold.
         hf = dm[dm.condition == "harmful_forced"].groupby("pos")["mu"].mean()
         below = hf[hf < mu_threshold]

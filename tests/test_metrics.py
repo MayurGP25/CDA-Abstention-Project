@@ -58,7 +58,7 @@ def test_free_condition_has_zero_kl():
     p_free = torch.softmax(logits, dim=-1)
     allowed = torch.ones(V, dtype=torch.bool)  # nothing masked
     m = compute_metrics(p_free, p_free, allowed, R, int(torch.argmax(p_free)))
-    assert abs(m.D) < 1e-9
+    assert abs(m.D) < 1e-6  # -log(sum softmax); ~0 up to float precision
     assert m.alpha == 0.0  # nothing masked away
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from . import data, grammars, refusal_set
+from . import data, grammars, refusal_score, refusal_set
 from .model_loader import load
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,6 +71,15 @@ def get_refusal_ids(lm, exp_cfg, harmful_prompts) -> list[int]:
               f"| |large|={len(rs.ids_large)} cov={rs.coverage_large:.3f}")
     which = exp_cfg.get("refusal_set", "large")
     return blob[f"ids_{which}"]
+
+
+def get_refusal_prefix_ids(lm):
+    """Token-id lists for the multi-token refusal prefixes (sequence-level S_R)."""
+    return refusal_score.encode_prefixes(lm.tokenizer)
+
+
+def sr_stride(exp_cfg) -> int:
+    return int(exp_cfg.get("refusal_score", {}).get("stride", 4))
 
 
 def harmful_prompts(exp_cfg, bench: str):

@@ -44,8 +44,9 @@ grammar-masked one actually sampled. `R` = the refusal-initiating token ids.
 
 | Metric | Formula | Reads as |
 |---|---|---|
-| **μ** (latent refusal mass) | `Σ_{v∈R} P_free(v)` | *How much did the model want to refuse here?* 1.0 = certain. Read from **pre-mask** logits, so measurable even when R is masked. |
-| **D** (coercion force) | `KL(P_con ‖ P_free)` over allowed support | *How hard is the grammar shoving it off course?* 0 = not fighting; large = forcing disfavored tokens. **Reverse** KL (finite; the forward direction diverges on masked tokens). |
+| **μ** (latent refusal mass, single-token) | `Σ_{v∈R} P_free(v)` | *How much did the model want to refuse here?* Cheap, dense diagnostic. Caveat: single tokens conflate refusal with lexical continuation ("I think…" also starts with "I") — so **S_R** below is the defensible primary signal. |
+| **S_R** (sequence-level refusal score) | `log Σ_r P_free(r ‖ context)` over refusal **prefixes** ("I cannot", "I'm unable", …), teacher-forced | *How much did the model want to refuse, measured at the phrase level?* Addresses the single-token ambiguity. Computed every `stride` positions. |
+| **D** (coercion force) | `KL(P_con ‖ P_free) = −log Z_A`, `Z_A = Σ_{allowed} P_free` | *How much free probability mass did the grammar remove?* **Reverse** KL (the forward direction diverges on masked tokens); the closed form `−log Z_A` is what we compute. |
 | **α** (abstention-attributable coercion) | masked-away refusal mass ÷ total masked-away mass | *Is the force aimed at the refusal specifically?* 1.0 = everything blocked was the refusal. |
 | **s** (coercion surprisal) | `-log P_free(forced token)` | *How shocked is the model at the token it was forced to emit?* ~0 = would've said it anyway; large = would essentially never. |
 

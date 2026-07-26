@@ -20,6 +20,7 @@ import xgrammar as xgr
 
 from .metrics import StepMetrics, compute_metrics
 from .model_loader import LoadedModel, encode_chat
+from .refusal_score import sequence_refusal_logprob
 
 
 def _bool_allowed(bitmask: torch.Tensor, vocab: int, device) -> torch.Tensor:
@@ -36,15 +37,20 @@ def run(
     *,
     compiled_grammar=None,
     max_new_tokens: int = 64,
+    refusal_prefix_ids: list[list[int]] | None = None,
+    sr_stride: int = 1,
 ) -> tuple[list[StepMetrics], list[int]]:
     """Run one prompt under one condition; return (per-step metrics, token ids).
 
-    The generated token ids are returned for OPTIONAL redacted logging only.
-    Do not persist decoded harmful text (see RESPONSIBLE_USE / ethics).
+    If `refusal_prefix_ids` is given, the sequence-level refusal score S_R is
+    computed every `sr_stride` positions (NaN elsewhere). The generated token ids
+    are returned for OPTIONAL redacted logging only -- do not persist decoded
+    harmful text (see RESPONSIBLE_USE / ethics).
     """
     model, tok, dev = lm.model, lm.tokenizer, lm.device
     V = lm.full_vocab
     R = torch.tensor(sorted(set(refusal_ids)), device=dev, dtype=torch.long)
+    pad_id = tok.pad_token_id if tok.pad_token_id is not None else (tok.eos_token_id or 0)
 
     input_ids = encode_chat(tok, messages, dev)
 
@@ -62,7 +68,7 @@ def run(
     records: list[StepMetrics] = []
     emitted: list[int] = []
 
-    for _ in range(max_new_tokens):
+    for t in range(max_new_tokens):
         p_free = torch.softmax(logits, dim=-1)
 
         if matcher is None:
@@ -79,7 +85,13 @@ def run(
             p_con = torch.softmax(masked, dim=-1)
             next_id = int(torch.argmax(p_con).item())
 
-        records.append(compute_metrics(p_free, p_con, allowed, R, next_id))
+        m = compute_metrics(p_free, p_con, allowed, R, next_id)
+        # Sequence-level refusal score at this position (context = prompt + emitted so far).
+        if refusal_prefix_ids is not None and (t % sr_stride == 0):
+            ctx = (torch.cat([input_ids[0], torch.tensor(emitted, device=dev, dtype=torch.long)])
+                   if emitted else input_ids[0])
+            m.sr = sequence_refusal_logprob(model, ctx, refusal_prefix_ids, dev, pad_id=pad_id)
+        records.append(m)
         emitted.append(next_id)
 
         if matcher is not None:

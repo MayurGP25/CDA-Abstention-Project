@@ -15,5 +15,10 @@ grammar:
 max_new_tokens: 64     # generation depth T for depth profiles
 refusal_set: large     # small | large  (flip for the R-sensitivity ablation)
 
+# Sequence-level refusal score S_R (multi-token refusal prefixes, teacher-forced).
+# Computed every `stride` positions (1 = every token; higher = cheaper).
+refusal_score:
+  stride: 4
+
 # Restoration sweep (E5): positions at which R u {EOS} is re-allowed.
 restoration_positions: [0, 2, 4, 8, 16, 32]
