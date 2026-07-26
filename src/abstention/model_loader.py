@@ -37,8 +37,10 @@ def load(
     max_threads: int = 8,
 ) -> LoadedModel:
     torch_dtype = getattr(torch, dtype)
+    print(f"[load] tokenizer + config: {model_id} ...", flush=True)
     tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
     cfg = AutoConfig.from_pretrained(model_id, revision=revision)
+    print("[load] weights -> GPU (first run downloads ~15GB; watch nvidia-smi) ...", flush=True)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         revision=revision,
@@ -49,8 +51,10 @@ def load(
 
     # The one line that matters: logit width, not tokenizer vocab.
     full_vocab = int(cfg.vocab_size)
+    print(f"[load] building xgrammar TokenizerInfo (vocab={full_vocab}; ~30-60s) ...", flush=True)
     tinfo = xgr.TokenizerInfo.from_huggingface(tok, vocab_size=full_vocab)
     compiler = xgr.GrammarCompiler(tinfo, max_threads=max_threads)
+    print("[load] ready.", flush=True)
 
     return LoadedModel(
         model=model,
