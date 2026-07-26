@@ -19,7 +19,7 @@ import torch
 import xgrammar as xgr
 
 from .metrics import StepMetrics, compute_metrics
-from .model_loader import LoadedModel
+from .model_loader import LoadedModel, encode_chat
 
 
 def _bool_allowed(bitmask: torch.Tensor, vocab: int, device) -> torch.Tensor:
@@ -46,9 +46,7 @@ def run(
     V = lm.full_vocab
     R = torch.tensor(sorted(set(refusal_ids)), device=dev, dtype=torch.long)
 
-    input_ids = tok.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt"
-    ).to(dev)
+    input_ids = encode_chat(tok, messages, dev)
 
     matcher = None
     bitmask = None
@@ -126,9 +124,7 @@ def restoration_probe(
     R = torch.tensor(sorted(set(refusal_ids)), device=dev, dtype=torch.long)
     eos = tok.eos_token_id
 
-    input_ids = tok.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt"
-    ).to(dev)
+    input_ids = encode_chat(tok, messages, dev)
     matcher = xgr.GrammarMatcher(compiled_grammar)
     bitmask = xgr.allocate_token_bitmask(1, V)
 

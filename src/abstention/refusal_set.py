@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 import torch
 
+from .model_loader import encode_chat
+
 CURATED_SEEDS = [
     "I", "I'm", "I am", "I cannot", "I can't", "I won't", "I will not",
     "Sorry", "sorry", "As an", "As a", "Unfortunately", "I apologize",
@@ -50,9 +52,7 @@ def _first_token_ids(tok, strings) -> set[int]:
 @torch.no_grad()
 def _free_first_logits(lm, messages) -> torch.Tensor:
     """Return the pre-softmax logits at the first generated position."""
-    input_ids = lm.tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt"
-    ).to(lm.device)
+    input_ids = encode_chat(lm.tokenizer, messages, lm.device)
     out = lm.model(input_ids=input_ids)
     return out.logits[0, -1, :].float()
 
@@ -82,16 +82,9 @@ def harvest(lm, harmful_prompts: list[str], *, probe_text_tokens: int = 12) -> R
         p0 = torch.softmax(logits, dim=-1)
 
         # Short free generation to decide if this prompt actually elicits a refusal.
-        gen = lm.model.generate(
-            lm.tokenizer.apply_chat_template(
-                msgs, add_generation_prompt=True, return_tensors="pt"
-            ).to(lm.device),
-            max_new_tokens=probe_text_tokens,
-            do_sample=False,
-        )
-        prompt_len = lm.tokenizer.apply_chat_template(
-            msgs, add_generation_prompt=True, return_tensors="pt"
-        ).shape[1]
+        ids = encode_chat(lm.tokenizer, msgs, lm.device)
+        gen = lm.model.generate(ids, max_new_tokens=probe_text_tokens, do_sample=False)
+        prompt_len = ids.shape[1]
         text = lm.tokenizer.decode(gen[0, prompt_len:], skip_special_tokens=True)
 
         if _looks_like_refusal(text):

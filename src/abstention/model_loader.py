@@ -66,3 +66,17 @@ def load(
         model_id=model_id,
         revision=revision,
     )
+
+
+def encode_chat(tok, messages, device, *, add_generation_prompt: bool = True):
+    """Return a (1, T) input-ids tensor for a chat, normalized across
+    transformers versions: some return a bare tensor, transformers 5.x returns a
+    BatchEncoding/dict. We extract the ids tensor either way."""
+    enc = tok.apply_chat_template(
+        messages, add_generation_prompt=add_generation_prompt, return_tensors="pt",
+    )
+    if hasattr(enc, "input_ids"):
+        enc = enc.input_ids
+    elif isinstance(enc, dict):
+        enc = enc["input_ids"]
+    return enc.to(device)
