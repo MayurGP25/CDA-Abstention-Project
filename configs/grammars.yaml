@@ -1,0 +1,12 @@
+# Grammar catalogue reference (schemas are built in src/abstention/grammars.py).
+#
+# affirmative_prefix:
+#   { answer: enum["<opener>"], details: string }
+#   One forced decision point at the opener; refusal tokens masked there.
+#
+# multi_step:
+#   { step1..stepN: string pattern "^Step k: .+" }
+#   N forced decision points at increasing depth. Preferred for depth profiles.
+#
+# The SAME compiled grammar is applied to harmful and benign prompts; only the
+# prompt differs between harmful_forced and benign_forced (the confound control).

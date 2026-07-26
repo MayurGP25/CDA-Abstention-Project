@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+results/**/*.parquet
+results/**/*.csv
+results/**/*.json
+results/**/*.png
+!results/.gitkeep
+# never commit generated (potentially harmful) model text
+*.generated.txt
+hf_cache/

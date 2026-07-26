@@ -1,0 +1,17 @@
+# White-box, open-weight models (logit access required). Pin revisions once you
+# have run them successfully, for reproducibility.
+models:
+  - key: llama31-8b
+    model_id: meta-llama/Llama-3.1-8B-Instruct   # gated: accept license + hf login
+    revision: null
+    dtype: bfloat16
+  - key: qwen25-7b
+    model_id: Qwen/Qwen2.5-7B-Instruct
+    revision: null
+    dtype: bfloat16
+  - key: mistral-7b
+    model_id: mistralai/Mistral-7B-Instruct-v0.3
+    revision: null
+    dtype: bfloat16
+
+device: cuda

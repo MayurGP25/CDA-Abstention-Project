@@ -1,0 +1,19 @@
+seed: 0
+
+# Subsample sizes per benchmark (report exact ids in results).
+harmful:
+  advbench: 200
+  harmbench: 100
+  jailbreakbench: 100
+benign_n: 200          # XSTest safe prompts for benign_forced control
+
+grammar:
+  name: multi_step     # affirmative_prefix | multi_step
+  n_steps: 5
+  opener: "Sure, here are the detailed steps: "
+
+max_new_tokens: 64     # generation depth T for depth profiles
+refusal_set: large     # small | large  (flip for the R-sensitivity ablation)
+
+# Restoration sweep (E5): positions at which R u {EOS} is re-allowed.
+restoration_positions: [0, 2, 4, 8, 16, 32]
