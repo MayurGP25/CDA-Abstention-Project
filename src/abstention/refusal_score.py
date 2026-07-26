@@ -20,28 +20,40 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-# Multi-token refusal continuations. Kept phrase-level and model-agnostic.
+# Multi-token refusal continuations. Prefix-free openers only (extensions like
+# "I cannot help" are subsumed by "I cannot" and would double-count).
 REFUSAL_PREFIXES = [
     "I cannot", "I can't", "I can not", "I won't", "I will not",
-    "I'm unable", "I am unable", "I'm not able", "I cannot help",
-    "I can't help", "I cannot assist", "I can't assist",
-    "Sorry, I can't", "I'm sorry, but I can't", "I must decline",
-    "I cannot provide", "I can't provide", "I cannot fulfill",
+    "I'm unable", "I am unable", "I'm not able", "I must decline",
+    "I'm sorry", "I am sorry", "I apologize", "Sorry", "As an AI",
 ]
 
 
+def _prefix_free(seqs: list[list[int]]) -> list[list[int]]:
+    """Drop any token sequence that has a shorter kept sequence as a prefix, so
+    the per-phrase probabilities are (approximately) mutually exclusive and the
+    logsumexp doesn't double-count nested phrases."""
+    uniq = sorted({tuple(s) for s in seqs if s}, key=len)
+    kept: list[tuple] = []
+    for s in uniq:
+        if not any(s[: len(k)] == k for k in kept):
+            kept.append(s)
+    return [list(s) for s in kept]
+
+
 def encode_prefixes(tokenizer, prefixes: list[str] | None = None) -> list[list[int]]:
-    """Tokenize each refusal prefix to its token-id list (no special tokens).
-    De-duplicates identical id sequences."""
+    """Token-id lists for refusal prefixes, with BOTH no-space and leading-space
+    variants -- they tokenize differently ("I" vs " I") and occur at different
+    positions (no-space right after the chat template, space-prefixed
+    mid-sentence). Reduced to a prefix-free set."""
     prefixes = prefixes or REFUSAL_PREFIXES
-    seen: set[tuple] = set()
-    out: list[list[int]] = []
+    raw: list[list[int]] = []
     for p in prefixes:
-        ids = tokenizer.encode(p, add_special_tokens=False)
-        if ids and tuple(ids) not in seen:
-            seen.add(tuple(ids))
-            out.append(ids)
-    return out
+        for variant in (p, " " + p):
+            ids = tokenizer.encode(variant, add_special_tokens=False)
+            if ids:
+                raw.append(ids)
+    return _prefix_free(raw)
 
 
 @torch.no_grad()
@@ -55,8 +67,8 @@ def sequence_refusal_logprob(
     """log sum_r P(r | ctx), one batched forward over the refusal prefixes.
 
     ctx_ids : (L,) the full context so far (chat-templated prompt + generated).
-    Returns a log-probability in (-inf, 0]; exp() is the total refusal-prefix
-    probability mass at this position.
+    Returns log sum_r P(r | ctx); exp() approximates the refusal-prefix
+    probability mass (prefix-free set, so near mutually exclusive).
     """
     P = len(prefix_id_lists)
     if P == 0:
