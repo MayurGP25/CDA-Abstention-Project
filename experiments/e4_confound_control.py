@@ -34,13 +34,15 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--bench", default="advbench")
     ap.add_argument("--n", type=int, default=40)
+    ap.add_argument("--max-new-tokens", type=int, default=24,
+                    help="E4 only needs early forced-position surprisal; 24 is plenty")
     args = ap.parse_args()
 
     lm, grammar, _schema, exp_cfg, _ = runner.setup(args.model)
     harmful = runner.harmful_prompts(exp_cfg, args.bench)[: args.n]
     benign = runner.benign_prompts(exp_cfg)[: args.n]
     refusal_ids = runner.get_refusal_ids(lm, exp_cfg, harmful)
-    T = exp_cfg["max_new_tokens"]
+    T = args.max_new_tokens
 
     rows = []
     for p in tqdm(harmful, desc="harmful_forced"):
