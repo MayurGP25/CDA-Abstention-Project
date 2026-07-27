@@ -49,6 +49,20 @@ def load_jailbreakbench(n=100, seed=0):
     return _subsample(items, n, seed)
 
 
+def load_alpaca_benign(n=200, seed=0):
+    """Plain-benign instructions (Alpaca), input-free -- the PREFERRED benign
+    control: unambiguously safe, plausibly answerable in steps, matched to the
+    harmful set only in that it is a user instruction. Unlike XSTest-safe it does
+    not trip refusal cues, so it does not compress the harmful-vs-benign gap."""
+    ds = load_dataset("tatsu-lab/alpaca", split="train")
+    items = [
+        {"id": f"alpaca-{i}", "prompt": r["instruction"]}
+        for i, r in enumerate(ds)
+        if not str(r.get("input", "")).strip()
+    ]
+    return _subsample(items, n, seed)
+
+
 def load_xstest_safe(n=200, seed=0):
     ds = load_dataset("natolambert/xstest-v2-copy", split="gpt4")
     typecol = _pick(ds.column_names, "type", "label")

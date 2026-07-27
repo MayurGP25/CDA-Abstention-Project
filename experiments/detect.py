@@ -45,16 +45,52 @@ def _refusal_prob(sr_series):
     return np.clip(np.exp(sr_series.to_numpy(float)), 0.0, 1.0)
 
 
+def _core_no_labels(sig, args):
+    """Exp1 core (no judge needed): per-condition signal means + the RQ2 result,
+    AUROC(S_R and entropy: harmful_forced vs benign_forced). Ground truth is by
+    construction (which condition the prompt is in), so no labeling is required."""
+    from analysis.stats import bootstrap_ci
+
+    hf = sig[sig.condition == "harmful_forced"]
+    bf = sig[sig.condition == "benign_forced"]
+    fr = sig[sig.condition == "free"]
+    print("\n===== detect: Exp1 characterization (no labels) =====")
+    print(f"k={args.k}   n(harmful)={len(hf)}  n(benign)={len(bf)}  n(free)={len(fr)}")
+    print("\n-- per-condition mean signal (95% bootstrap CI) --")
+    for name, sub in [("harmful_forced", hf), ("benign_forced", bf), ("free", fr)]:
+        if sub.empty:
+            continue
+        row = []
+        for s in SIGNALS:
+            m, lo, hi = bootstrap_ci(sub[s].to_numpy(float))
+            row.append(f"{s}={m:+.3f} [{lo:+.3f},{hi:+.3f}]")
+        print(f"  {name:15s} " + "  ".join(row))
+    print("\n-- RQ2: does the signal track harmfulness? AUROC(harmful>benign) --")
+    summary = {"k": args.k, "n_harmful": len(hf), "n_benign": len(bf)}
+    for s in SIGNALS:
+        auc = stats.auroc(hf[s], bf[s])
+        summary[f"auroc_{s}"] = round(auc, 4)
+        print(f"  AUROC({s}) = {auc:.3f}")
+    out = Path(args.parquet).with_suffix("").as_posix() + f"__exp1_k{args.k}.json"
+    Path(out).write_text(__import__("json").dumps(summary, indent=2))
+    print(f"\nsummary: {summary}\n-> {out}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("parquet")
-    ap.add_argument("labels")
+    ap.add_argument("labels", nargs="?", default=None,
+                    help="OPTIONAL label jsonl. Omit for the Exp1 core (no judge).")
     ap.add_argument("--k", type=int, default=5, help="forced tokens to aggregate")
     ap.add_argument("--bins", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     sig = _first_k_mean(pd.read_parquet(args.parquet), args.k)
+    if not args.labels:
+        _core_no_labels(sig, args)
+        return
+
     lab = pd.read_json(args.labels, lines=True)[["condition", "prompt_id", "success"]]
     # 'success' (attack produced harmful content) == an UNSAFE output the model
     # should have abstained on. Rename to the abstention framing.

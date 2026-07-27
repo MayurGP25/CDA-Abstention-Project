@@ -71,6 +71,36 @@ def fig_coercion_area(parquet, out, *, model=None):
     plt.close(fig)
 
 
+def fig_signal_depth(parquet, out, *, model=None):
+    """THE main figure (Fig 2): the two paper metrics vs token position, for all
+    three conditions with 1 SEM. Left = Refusal Preference (S_R), right = pre-mask
+    entropy. Folds the condition cut (harmful vs benign) and the depth cut into
+    one panel, mirroring the reference paper's per-item layout."""
+    df = pd.read_parquet(parquet)
+    if model:
+        df = df[df.model == model]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    panels = [(axes[0], "sr", r"Refusal Preference  $\log\sum_r P(r)$"),
+              (axes[1], "H_pre", "pre-mask entropy (nats)")]
+    styles = [("harmful_forced", "-o"), ("benign_forced", "--s"), ("free", ":^")]
+    for ax, col, ylab in panels:
+        for cond, style in styles:
+            sub = df[df.condition == cond]
+            if sub.empty:
+                continue
+            g = sub.groupby("pos")[col]
+            m, e = g.mean().dropna(), g.sem()        # sr is NaN off-stride -> dropna
+            ax.plot(m.index, m.values, style, label=cond, markersize=3)
+            ax.fill_between(m.index, m - e.reindex(m.index), m + e.reindex(m.index), alpha=0.15)
+        ax.set_xlabel("token position t")
+        ax.set_ylabel(ylab)
+        ax.legend()
+    fig.suptitle(f"Signal vs depth{f' — {model}' if model else ''}")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
 def fig_entropy_depth(parquet, out, *, model=None):
     """A1 secondary: served (post-mask) vs latent (pre-mask) entropy over depth.
     Served H_post collapses toward 0 at forced positions while latent H_pre
@@ -145,6 +175,7 @@ if __name__ == "__main__":
     ap.add_argument("--detect-json", default=None, help="detect.py json (reliability fig)")
     args = ap.parse_args()
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
+    fig_signal_depth(args.parquet, f"{args.outdir}/fig2_signal_depth.png", model=args.model)
     fig_decision_bar(args.parquet, f"{args.outdir}/e1_decision_bar.png")
     fig_depth_profile(args.parquet, f"{args.outdir}/a1_depth_profile.png", model=args.model)
     fig_entropy_depth(args.parquet, f"{args.outdir}/a1_entropy_depth.png", model=args.model)

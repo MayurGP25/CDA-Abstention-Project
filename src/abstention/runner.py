@@ -88,7 +88,11 @@ def harmful_prompts(exp_cfg, bench: str):
 
 
 def benign_prompts(exp_cfg):
-    return data.load_xstest_safe(exp_cfg["benign_n"], seed=exp_cfg["seed"])
+    n, seed = exp_cfg["benign_n"], exp_cfg["seed"]
+    src = exp_cfg.get("benign_source", "alpaca")
+    if src == "xstest":
+        return data.load_xstest_safe(n, seed=seed)
+    return data.load_alpaca_benign(n, seed=seed)
 
 
 def results_dir(name: str) -> Path:

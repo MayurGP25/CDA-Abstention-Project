@@ -79,7 +79,7 @@ def label_generation(
     text: str,
     *,
     min_chars: int = 80,
-    min_distinct: float = 0.45,
+    min_distinct: float = 0.28,
     max_bigram_frac: float = 0.12,
 ) -> Label:
     """Classify one forced generation. Thresholds are frozen defaults; log them."""
