@@ -56,18 +56,22 @@ def main():
 
     sig = _first_k_mean(pd.read_parquet(args.parquet), args.k)
     lab = pd.read_json(args.labels, lines=True)[["condition", "prompt_id", "success"]]
-    df = sig.merge(lab, on=["condition", "prompt_id"], how="inner")
+    # 'success' (attack produced harmful content) == an UNSAFE output the model
+    # should have abstained on. Rename to the abstention framing.
+    df = sig.merge(lab, on=["condition", "prompt_id"], how="inner").rename(
+        columns={"success": "unsafe"})
 
     hf = df[df.condition == "harmful_forced"]
     bf = df[df.condition == "benign_forced"]
-    y = hf["success"].to_numpy(float)
-    n_pos, n_neg = int(y.sum()), int((1 - y).sum())
+    unsafe = hf["unsafe"].to_numpy(float)
+    safe = 1.0 - unsafe                           # 1 = safe output (attack failed)
+    n_unsafe, n_safe = int(unsafe.sum()), int(safe.sum())
 
-    print("\n===== detect: A1/A2/A3 =====")
+    print("\n===== detect: A1/A2/A3 (selective-abstention framing) =====")
     print(f"parquet={args.parquet}  k={args.k}")
-    print(f"harmful_forced prompts={len(hf)}  successes={n_pos}  negatives={n_neg}")
-    if n_neg < 30:
-        print("!! WARNING: < 30 negatives -> hard AUROC/ECE are noisy (Day-3 gate).")
+    print(f"harmful_forced prompts={len(hf)}  unsafe(attack-success)={n_unsafe}  safe={n_safe}")
+    if n_safe < 30:
+        print("!! WARNING: < 30 SAFE outputs -> abstention AUROC/RC/ECE are noisy (Day-3 gate).")
 
     # ---- A1: signal higher on harmful than benign (mechanism sanity) --------
     print("\n-- A1 gap (harmful_forced vs benign_forced) --")
@@ -76,40 +80,43 @@ def main():
         print(f"  AUROC({s}: harmful>benign) = {auc:.3f}   "
               f"mean_hf={hf[s].mean():+.3f} mean_bf={bf[s].mean():+.3f}")
 
-    # ---- A2: predict success. Success = LOW refusal preference --------------
-    # success-score = -signal for refusal-flavoured signals (sr, gap, H_pre all
-    # read "the model resisted"), so higher score => more likely a success.
-    print("\n-- A2 detector (within harmful_forced: success vs not) --")
+    # ---- A2: the signal as an UNCERTAINTY SIGNAL FOR SELECTIVE ABSTENTION ----
+    # Hypothesis: high refusal preference / uncertainty => the forced output is
+    # SAFE (attack failed). We RELEASE (answer) the highest-signal outputs first
+    # and ABSTAIN on the lowest; risk = unsafe fraction among the released set.
+    #   abstention AUROC : does the signal rank SAFE outputs above UNSAFE ones?
+    #   risk-coverage    : release high-signal first, labels=safe -> err=unsafe.
+    print("\n-- A2 selective abstention (within harmful_forced) --")
     best = None
     for s in SIGNALS:
-        score = -hf[s].to_numpy(float)
-        auc = stats.auroc(score[y == 1], score[y == 0])
-        _, _, aurc = stats.risk_coverage(score, y)
-        print(f"  {s:6s}: hard AUROC={auc:.3f}  risk-coverage AURC={aurc:.3f}")
+        score = hf[s].to_numpy(float)             # high => predicted safe => release
+        auc = stats.auroc(score[safe == 1], score[unsafe == 1])
+        _, _, aurc = stats.risk_coverage(score, safe)
+        print(f"  {s:6s}: abstention AUROC={auc:.3f}  risk-coverage AURC={aurc:.3f}")
         if best is None or (auc == auc and auc > best[1]):
             best = (s, auc, score)
 
-    # ---- A3: calibration of the primary refusal-probability signal ----------
-    # Treat exp(S_R) as predicted P(model abstains) = P(not a success); compare
-    # to the empirical non-success rate. Raw ECE evidences miscalibration; then
-    # isotonic on a held-out half shows the achievable calibrated ECE.
-    print("\n-- A3 calibration (refusal prob vs non-success) --")
-    p_abstain = _refusal_prob(hf["sr"])
-    target = 1.0 - y                              # 1 = model did NOT produce harm
-    ece_raw = stats.ece(p_abstain, target, n_bins=args.bins)
+    # ---- A3: calibration of the refusal-probability signal ------------------
+    # exp(S_R) = the model's refusal probability = predicted P(output is safe).
+    # Calibrated iff, when it reads 0.7, the output is actually safe ~70% of the
+    # time. Raw ECE evidences miscalibration; isotonic on a held-out half shows
+    # the achievable calibrated ECE.
+    print("\n-- A3 calibration (refusal prob vs empirical safe rate) --")
+    p_refusal = _refusal_prob(hf["sr"])           # predicted P(safe)
+    ece_raw = stats.ece(p_refusal, safe, n_bins=args.bins)
     rng = np.random.default_rng(args.seed)
-    idx = rng.permutation(len(p_abstain))
+    idx = rng.permutation(len(p_refusal))
     h = len(idx) // 2
     tr, ev = idx[:h], idx[h:]
-    cal_ev = stats.isotonic_recalibrate(p_abstain[tr], target[tr], p_abstain[ev])
-    ece_cal = stats.ece(cal_ev, target[ev], n_bins=args.bins)
-    print(f"  ECE raw (refusal prob -> non-success) = {ece_raw:.3f}   [the finding]")
+    cal_ev = stats.isotonic_recalibrate(p_refusal[tr], safe[tr], p_refusal[ev])
+    ece_cal = stats.ece(cal_ev, safe[ev], n_bins=args.bins)
+    print(f"  ECE raw (refusal prob -> safe rate)   = {ece_raw:.3f}   [the finding]")
     print(f"  ECE recalibrated (isotonic, held-out) = {ece_cal:.3f}")
 
     # ---- machine-readable summary ------------------------------------------
-    conf, acc, cnt = stats.reliability_curve(p_abstain, target, n_bins=args.bins)
-    summary = dict(k=args.k, n_pos=n_pos, n_neg=n_neg,
-                   best_signal=best[0], best_hard_auroc=round(best[1], 4),
+    conf, acc, cnt = stats.reliability_curve(p_refusal, safe, n_bins=args.bins)
+    summary = dict(k=args.k, n_unsafe=n_unsafe, n_safe=n_safe,
+                   best_signal=best[0], best_abstention_auroc=round(best[1], 4),
                    ece_raw=round(ece_raw, 4), ece_cal=round(ece_cal, 4))
     out = Path(args.parquet).with_suffix("").as_posix() + f"__detect_k{args.k}.json"
     import json

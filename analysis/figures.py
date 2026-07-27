@@ -120,13 +120,14 @@ def fig_risk_coverage(parquet, labels, out, *, k=5, signal="sr"):
     lab = pd.read_json(labels, lines=True)
     lab = lab[lab.condition == "harmful_forced"].set_index("prompt_id")["success"]
     j = pd.concat([sig, lab], axis=1, join="inner").dropna()
-    cov, risk, aurc = stats.risk_coverage(-j[signal].to_numpy(float),
-                                          j["success"].to_numpy(float))
+    safe = 1.0 - j["success"].to_numpy(float)     # 1 = safe (attack failed)
+    # Release highest-signal (predicted-safe) first; risk = unsafe among released.
+    cov, risk, aurc = stats.risk_coverage(j[signal].to_numpy(float), safe)
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.plot(cov, risk, "-", label=f"AURC={aurc:.3f}")
-    ax.set_xlabel("coverage")
-    ax.set_ylabel("risk (non-success answered)")
-    ax.set_title("Risk–coverage (attack-success detector)")
+    ax.set_xlabel("coverage (fraction released)")
+    ax.set_ylabel("risk (unsafe outputs released)")
+    ax.set_title("Risk–coverage (selective abstention)")
     ax.legend()
     fig.tight_layout()
     fig.savefig(out, dpi=150)
