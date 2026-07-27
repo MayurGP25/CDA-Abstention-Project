@@ -8,8 +8,9 @@ harmful:
 benign_n: 200          # XSTest safe prompts for benign_forced control
 
 grammar:
-  name: multi_step     # affirmative_prefix | multi_step
+  name: forced_steps   # forced_steps (refusal-masking, query-in-prompt) | multi_step | affirmative_prefix
   n_steps: 5
+  min_step_chars: 60   # forced_steps only: forbids closing a step empty
   opener: "Sure, here are the detailed steps: "
 
 max_new_tokens: 64     # generation depth T for depth profiles

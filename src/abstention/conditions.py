@@ -26,6 +26,8 @@ def _rows(metrics, *, condition, prompt_id, model_id):
             D=m.D,
             alpha=m.alpha,
             s=m.s,
+            H_pre=m.H_pre,
+            H_post=m.H_post,
             n_allowed=m.n_allowed,
             forced_id=m.forced_id,
         )

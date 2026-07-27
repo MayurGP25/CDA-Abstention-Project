@@ -47,6 +47,7 @@ def setup(model_key: str):
     g = exp_cfg["grammar"]
     grammar, schema = grammars.build(
         lm.compiler, g["name"], n_steps=g.get("n_steps", 5), opener=g.get("opener"),
+        min_step_chars=g.get("min_step_chars", 60),
     )
     return lm, grammar, schema, exp_cfg, models_cfg
 

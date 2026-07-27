@@ -40,6 +40,8 @@ class StepMetrics:
     s: float        # M4 surprisal of the forced token under the free dist
     n_allowed: int  # size of the grammar-allowed set at this step
     forced_id: int  # token id actually emitted
+    H_pre: float    # latent entropy: Shannon entropy of the PRE-mask P_free (nats)
+    H_post: float   # served entropy: Shannon entropy of the POST-mask P_con (nats)
     sr: float = float("nan")  # sequence-level refusal logprob (set by decode loop)
 
 
@@ -84,6 +86,15 @@ def compute_metrics(
     # M4 -- surprisal of the forced token under the free distribution.
     s = -(p_free[forced_id].clamp_min(_EPS)).log()
 
+    # Entropy (nats), computed EXACTLY from the full distributions in hand (no
+    # top-N truncation). H_pre = latent uncertainty in the pre-mask P_free;
+    # H_post = served uncertainty after the grammar masks the support. At a
+    # literal/forced position (n_allowed small) H_post -> 0 while H_pre can stay
+    # high -- the served-vs-latent gap H_pre - H_post is the decoupling signal.
+    H_pre = -(p_free.clamp_min(_EPS) * p_free.clamp_min(_EPS).log()).sum()
+    pc = p_con[p_con > 0]                       # post-mask support only
+    H_post = -(pc * pc.log()).sum() if pc.numel() else p_con.new_zeros(())
+
     return StepMetrics(
         mu=float(mu),
         D=float(D),
@@ -91,4 +102,6 @@ def compute_metrics(
         s=float(s),
         n_allowed=int(allowed.sum()),
         forced_id=int(forced_id),
+        H_pre=float(H_pre),
+        H_post=float(H_post),
     )

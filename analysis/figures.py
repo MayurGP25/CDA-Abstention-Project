@@ -71,6 +71,68 @@ def fig_coercion_area(parquet, out, *, model=None):
     plt.close(fig)
 
 
+def fig_entropy_depth(parquet, out, *, model=None):
+    """A1 secondary: served (post-mask) vs latent (pre-mask) entropy over depth.
+    Served H_post collapses toward 0 at forced positions while latent H_pre
+    stays up -- the behaviour/confidence decoupling."""
+    df = pd.read_parquet(parquet)
+    df = df[df.condition == "harmful_forced"]
+    if model:
+        df = df[df.model == model]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for col, style, lab in [("H_pre", "-o", r"latent $H_{pre}$"),
+                            ("H_post", "--s", r"served $H_{post}$")]:
+        m, e = _mean_by_pos(df, col)
+        ax.plot(m.index, m.values, style, label=lab, markersize=3)
+        ax.fill_between(m.index, m - e, m + e, alpha=0.15)
+    ax.set_xlabel("generation position t")
+    ax.set_ylabel("entropy (nats)")
+    ax.set_title(f"Served vs latent entropy{f' — {model}' if model else ''}")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
+def fig_reliability(detect_json, out):
+    """A3: reliability diagram from a detect.py summary json (RAW curve)."""
+    import json
+    blob = json.loads(Path(detect_json).read_text())["reliability"]
+    conf, acc = blob["conf"], blob["acc"]
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
+    ax.plot([0, 1], [0, 1], ":", color="grey", label="perfect")
+    ax.plot(conf, acc, "-o", markersize=4, label="observed")
+    ax.set_xlabel("predicted refusal probability")
+    ax.set_ylabel("empirical non-success rate")
+    ax.set_title("Reliability (raw signal)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
+def fig_risk_coverage(parquet, labels, out, *, k=5, signal="sr"):
+    """A2: risk--coverage curve for the success detector."""
+    from analysis import stats
+    df = pd.read_parquet(parquet)
+    d = df[(df.condition == "harmful_forced") & (df.pos < k)]
+    sig = d.groupby("prompt_id")[signal].mean()
+    lab = pd.read_json(labels, lines=True)
+    lab = lab[lab.condition == "harmful_forced"].set_index("prompt_id")["success"]
+    j = pd.concat([sig, lab], axis=1, join="inner").dropna()
+    cov, risk, aurc = stats.risk_coverage(-j[signal].to_numpy(float),
+                                          j["success"].to_numpy(float))
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.plot(cov, risk, "-", label=f"AURC={aurc:.3f}")
+    ax.set_xlabel("coverage")
+    ax.set_ylabel("risk (non-success answered)")
+    ax.set_title("Risk–coverage (attack-success detector)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -78,9 +140,16 @@ if __name__ == "__main__":
     ap.add_argument("parquet")
     ap.add_argument("--outdir", default="results/figures")
     ap.add_argument("--model", default=None)
+    ap.add_argument("--labels", default=None, help="label jsonl (enables A2/A3 figs)")
+    ap.add_argument("--detect-json", default=None, help="detect.py json (reliability fig)")
     args = ap.parse_args()
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
     fig_decision_bar(args.parquet, f"{args.outdir}/e1_decision_bar.png")
-    fig_depth_profile(args.parquet, f"{args.outdir}/e2_depth_profile.png", model=args.model)
+    fig_depth_profile(args.parquet, f"{args.outdir}/a1_depth_profile.png", model=args.model)
+    fig_entropy_depth(args.parquet, f"{args.outdir}/a1_entropy_depth.png", model=args.model)
     fig_coercion_area(args.parquet, f"{args.outdir}/e3_coercion_area.png", model=args.model)
+    if args.labels:
+        fig_risk_coverage(args.parquet, args.labels, f"{args.outdir}/a2_risk_coverage.png")
+    if args.detect_json:
+        fig_reliability(args.detect_json, f"{args.outdir}/a3_reliability.png")
     print(f"figures -> {args.outdir}")
