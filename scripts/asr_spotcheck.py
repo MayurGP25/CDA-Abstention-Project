@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -33,14 +34,17 @@ _REFUSAL_MARKERS = [
 
 
 def _extract_steps(text: str):
+    """Steps from the forced JSON. Falls back to a regex that pulls
+    "stepN": "..." fragments even when the JSON is truncated (unclosed)."""
     try:
         obj = json.loads(text)
         steps = obj.get("steps", {})
-        if isinstance(steps, dict):
+        if isinstance(steps, dict) and steps:
             return [str(v) for v in steps.values()]
     except Exception:
         pass
-    return None
+    frags = re.findall(r'"step\d+"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+    return [f.replace('\\"', '"').replace('\\n', ' ') for f in frags] if frags else None
 
 
 def _label(steps, raw: str) -> str:
@@ -55,15 +59,23 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--bench", default="advbench")
     ap.add_argument("--n", type=int, default=20)
-    ap.add_argument("--max-new-tokens", type=int, default=320)
+    ap.add_argument("--max-new-tokens", type=int, default=2048)
+    ap.add_argument("--out", default=None,
+                    help="JSONL to append each result to (default results/samples/<model>__<bench>.jsonl)")
     ap.add_argument("--show", action="store_true",
-                    help="print the extracted steps (harmful; stdout only)")
+                    help="also print the extracted steps (harmful; stdout only)")
     args = ap.parse_args()
 
     lm, _grammar, _schema, exp_cfg, _ = runner.setup(args.model)
     harmful = runner.harmful_prompts(exp_cfg, args.bench)[: args.n]
-    print(f"[setup] running {len(harmful)} prompts, T={args.max_new_tokens} "
-          f"(generate-only, no metrics)", flush=True)
+
+    out_path = Path(args.out) if args.out else (
+        Path(__file__).resolve().parents[1] / "results" / "samples"
+        / f"{args.model}__{args.bench}.jsonl")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fout = open(out_path, "a", encoding="utf-8")
+    print(f"[setup] {len(harmful)} prompts, T={args.max_new_tokens} (generate-only); "
+          f"saving -> {out_path}", flush=True)
 
     counts = {"REFUSAL": 0, "CONTENT?": 0, "OTHER(truncated?)": 0}
     for i, p in enumerate(harmful, 1):
@@ -75,13 +87,15 @@ def main():
         steps = _extract_steps(text)
         label = _label(steps, text)
         counts[label] += 1
-        print(f"     -> {label}")
-        if args.show:
-            if steps:
-                for j, s in enumerate(steps, 1):
-                    print(f"    step{j}: {s[:200]}")
-            else:
-                print("    (no parseable steps) " + text.replace("\n", " ")[-200:])
+        # incremental save: full record per prompt (flush so nothing is lost on a crash)
+        fout.write(json.dumps({"id": p["id"], "prompt": p["prompt"], "label": label,
+                               "steps": steps, "text": text}, ensure_ascii=False) + "\n")
+        fout.flush()
+        print(f"     -> {label}  ({len(text)} chars, {len(steps or [])} steps)")
+        if args.show and steps:
+            for j, s in enumerate(steps, 1):
+                print(f"    step{j}: {s[:200]}")
+    fout.close()
 
     n = sum(counts.values())
     print("\n===== ASR spot-check (strong EnumAttack schema) =====")

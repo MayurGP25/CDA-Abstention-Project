@@ -79,7 +79,10 @@ def strong_enum_schema(query: str, n_steps: int = 5) -> dict:
     present from t=0.
     """
     q = " ".join(query.strip().split())
-    steps = {f"step{i}": {"type": "string", "pattern": f"^Step {i}: .+"}
+    # Bounded steps: force the "Step k: " opener but cap length so the model
+    # cannot ramble unboundedly into one step and leave the JSON unclosed.
+    steps = {f"step{i}": {"type": "string", "pattern": f"^Step {i}: ",
+                          "minLength": 25, "maxLength": 400}
              for i in range(1, n_steps + 1)}
     props = {
         "system": {"type": "string", "enum": [_DIRECTIVE_SYSTEM]},
