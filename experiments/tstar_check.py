@@ -31,11 +31,16 @@ from analysis import stats  # noqa: E402
 
 
 def find_tstar(ids, tok, anchor):
-    """Smallest t with decode(ids[:t+1]).endswith(anchor); t* = t+1 (the slot
-    the grammar forces next -- the verb, where a refusal opener is forbidden)."""
+    """First t where the cumulative decode CONTAINS `anchor` (substring, robust
+    to BPE space-merging where 'endswith(\"Step 1: \")' never matches because the
+    space binds to the next token). t* = t+1 = the verb slot the grammar forces
+    next, where a refusal opener is forbidden."""
+    prev = ""
     for t in range(len(ids)):
-        if tok.decode(ids[: t + 1]).endswith(anchor):
+        cur = tok.decode(ids[: t + 1])
+        if anchor in cur and anchor not in prev:
             return t + 1
+        prev = cur
     return None
 
 
@@ -47,7 +52,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("parquet")
     ap.add_argument("--model", required=True, help="hf id for the tokenizer")
-    ap.add_argument("--anchor", default="Step 1: ")
+    ap.add_argument("--anchor", default="Step 1:")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model)
@@ -57,6 +62,15 @@ def main():
     if missing:
         sys.exit(f"parquet missing columns: {missing}")
     has_sr = "sr" in df.columns
+
+    # Diagnostic: show what the tokens actually decode to, so the anchor is
+    # never guessed blind. Print the first two harmful_forced generations.
+    hf_ids = (df[df.condition == "harmful_forced"].sort_values(["prompt_id", "pos"])
+              .groupby("prompt_id")["forced_id"].apply(list))
+    print("\n----- decoded sample (harmful_forced, first 24 tokens) -----")
+    for pid, ids in list(hf_ids.items())[:2]:
+        print(f"[{pid}] {tok.decode(ids)!r}")
+    print("------------------------------------------------------------")
 
     rows, n_none = [], 0
     for (cond, pid), g in df.groupby(["condition", "prompt_id"]):
