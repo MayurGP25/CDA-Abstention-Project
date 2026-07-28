@@ -3,6 +3,7 @@ build the grammar, harvest (or load cached) R, and provide prompt sets.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -80,7 +81,45 @@ def get_refusal_prefix_ids(lm):
 
 
 def sr_stride(exp_cfg) -> int:
-    return int(exp_cfg.get("refusal_score", {}).get("stride", 4))
+    return int(exp_cfg.get("refusal_score", {}).get("stride", 1))
+
+
+def sr_window(exp_cfg) -> int:
+    return int(exp_cfg.get("refusal_score", {}).get("window_after_tstar", 12))
+
+
+def anchor(exp_cfg) -> str:
+    """Literal after which the grammar pins the imperative verb. Config-driven so
+    it tracks the grammar: `affirmative_prefix` would need a different anchor."""
+    return str(exp_cfg.get("anchor", "Step 1:"))
+
+
+def run_fingerprint(lm, exp_cfg, models_cfg, schema, prompt_ids) -> dict:
+    """Everything that, if changed, makes two sets of shards non-mergeable.
+
+    collect.py hard-stops on mismatch rather than silently combining runs with
+    different settings -- the failure mode that quietly ruins a result.
+    """
+    g = exp_cfg["grammar"]
+    payload = dict(
+        model_id=lm.model_id,
+        grammar_name=g["name"],
+        schema=json.dumps(schema, sort_keys=True),
+        max_new_tokens=exp_cfg["max_new_tokens"],
+        free_max_new_tokens=exp_cfg.get("free_max_new_tokens", 8),
+        anchor=anchor(exp_cfg),
+        sr_stride=sr_stride(exp_cfg),
+        sr_window=sr_window(exp_cfg),
+        refusal_set=exp_cfg.get("refusal_set", "large"),
+        prefix_set_version=refusal_score.PREFIX_SET_VERSION,
+        prefix_set_hash=refusal_score.prefix_set_hash(),
+        benign_source=exp_cfg.get("benign_source", "alpaca"),
+        seed=exp_cfg["seed"],
+        prompt_ids=sorted(prompt_ids),
+    )
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return {"digest": digest, **payload}
 
 
 def harmful_prompts(exp_cfg, bench: str):

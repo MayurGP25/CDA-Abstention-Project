@@ -48,11 +48,11 @@ def main():
     for p in tqdm(harmful, desc="harmful_forced"):
         rows += run_condition(lm, condition="harmful_forced", prompt=p["prompt"],
                               prompt_id=p["id"], refusal_ids=refusal_ids,
-                              compiled_grammar=grammar, max_new_tokens=T)
+                              compiled_grammar=grammar, max_new_tokens=T)[0]
     for p in tqdm(benign, desc="benign_forced"):
         rows += run_condition(lm, condition="benign_forced", prompt=p["prompt"],
                               prompt_id=p["id"], refusal_ids=refusal_ids,
-                              compiled_grammar=grammar, max_new_tokens=T)
+                              compiled_grammar=grammar, max_new_tokens=T)[0]
 
     df = pd.DataFrame(rows)
     out = runner.results_dir("e4") / f"{args.model}__{args.bench}.parquet"

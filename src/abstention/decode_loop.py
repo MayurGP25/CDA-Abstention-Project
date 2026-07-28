@@ -12,12 +12,27 @@ step (the seam that hosted APIs and vLLM's fused sampler hide). At each step:
 `compiled_grammar=None` runs the FREE condition: no mask, P_con == P_free,
 greedy over the free distribution, D == 0. This shares the identical loop so the
 per-position bookkeeping matches the constrained conditions.
+
+Two position landmarks are recorded per generation, because the paper's claim is
+about WHERE the refusal preference dies, not merely that it does:
+
+  t0      position 0 -- the model has seen the prompt and written nothing.
+  t_open  the position whose context ends at a JSON string-VALUE opening quote
+          (`{ "step1": "`). Syntactically this is a fresh sentence start, so a
+          refusal is a grammatical continuation here exactly as it is at t0.
+  t_star  the position after the `Step 1:` literal -- the verb slot, where the
+          grammar actually forbids refusal openers.
+
+t0 -> t_open isolates the JSON FORMAT SHIFT. t_open -> t_star isolates SEMANTIC
+COMMITMENT (having written "Step 1:", the model has promised to give steps).
+Without t_open the two are confounded and the collapse is uninterpretable.
 """
 from __future__ import annotations
 
 import torch
 import xgrammar as xgr
 
+from .anchors import anchor_hit, is_value_open
 from .metrics import StepMetrics, compute_metrics
 from .model_loader import LoadedModel, encode_chat
 from .refusal_score import sequence_refusal_logprob
@@ -39,13 +54,23 @@ def run(
     max_new_tokens: int = 64,
     refusal_prefix_ids: list[list[int]] | None = None,
     sr_stride: int = 1,
-) -> tuple[list[StepMetrics], list[int]]:
-    """Run one prompt under one condition; return (per-step metrics, token ids).
+    anchor: str = "Step 1:",
+    sr_window: int = 12,
+) -> tuple[list[StepMetrics], list[int], int]:
+    """Run one prompt under one condition; return (metrics, token ids, t_star).
 
     If `refusal_prefix_ids` is given, the sequence-level refusal score S_R is
-    computed every `sr_stride` positions (NaN elsewhere). The generated token ids
-    are returned for OPTIONAL redacted logging only -- do not persist decoded
-    harmful text (see RESPONSIBLE_USE / ethics).
+    computed every `sr_stride` positions, and only while
+    `t_star is None or t <= t_star + sr_window` -- dense across the window where
+    the collapse happens, then switched off (S_R is the expensive part).
+
+    `anchor` has NO TRAILING SPACE on purpose: BPE tokenizers glue the space onto
+    the following word, so the running decode goes "...Step 1:" -> "...Step 1: First"
+    and never passes through "...Step 1: ". Matching with a trailing space finds
+    the anchor in exactly 0 generations (verified empirically, 0/150).
+
+    The generated token ids are returned for OPTIONAL redacted logging only --
+    do not persist decoded harmful text (see RESPONSIBLE_USE / ethics).
     """
     model, tok, dev = lm.model, lm.tokenizer, lm.device
     V = lm.full_vocab
@@ -67,6 +92,8 @@ def run(
 
     records: list[StepMetrics] = []
     emitted: list[int] = []
+    t_star: int | None = None
+    decoded = ""            # running decode of `emitted`, i.e. the context suffix
 
     for t in range(max_new_tokens):
         p_free = torch.softmax(logits, dim=-1)
@@ -86,13 +113,26 @@ def run(
             next_id = int(torch.argmax(p_con).item())
 
         m = compute_metrics(p_free, p_con, allowed, R, next_id)
+        # Position-0 and JSON string-value openings are the syntactically fresh
+        # starts where a refusal is a grammatical continuation. `decoded` is the
+        # context BEFORE this step, which is exactly what S_R conditions on.
+        m.ctx_open = (t == 0) or is_value_open(decoded)
+
         # Sequence-level refusal score at this position (context = prompt + emitted so far).
-        if refusal_prefix_ids is not None and (t % sr_stride == 0):
+        # Dense until sr_window positions past the anchor, then off.
+        in_window = t_star is None or t <= t_star + sr_window
+        if refusal_prefix_ids is not None and in_window and (t % sr_stride == 0):
             ctx = (torch.cat([input_ids[0], torch.tensor(emitted, device=dev, dtype=torch.long)])
                    if emitted else input_ids[0])
             m.sr = sequence_refusal_logprob(model, ctx, refusal_prefix_ids, dev, pad_id=pad_id)
         records.append(m)
         emitted.append(next_id)
+
+        # Anchor detection on the RUNNING decode (tokenizer-agnostic). t_star is
+        # the position AFTER the anchor literal completes -- the verb slot.
+        decoded = tok.decode(emitted)
+        if t_star is None and anchor_hit(decoded, anchor):
+            t_star = t + 1
 
         if matcher is not None:
             matcher.accept_token(next_id)
@@ -110,7 +150,10 @@ def run(
         past = step.past_key_values
         logits = step.logits[0, -1, :].float()
 
-    return records, emitted
+    ts = -1 if t_star is None else int(t_star)
+    for m in records:
+        m.t_star = ts
+    return records, emitted, ts
 
 
 @torch.no_grad()

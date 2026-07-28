@@ -51,7 +51,7 @@ def test_alpha_in_unit_interval():
     assert 0.0 - 1e-9 <= m.alpha <= 1.0 + 1e-9
 
 
-def test_free_condition_has_zero_kl():
+def test_free_condition_has_zero_kl_and_undefined_alpha():
     V = 32
     R = torch.tensor([0, 1])
     logits = torch.randn(V)
@@ -59,7 +59,9 @@ def test_free_condition_has_zero_kl():
     allowed = torch.ones(V, dtype=torch.bool)  # nothing masked
     m = compute_metrics(p_free, p_free, allowed, R, int(torch.argmax(p_free)))
     assert abs(m.D) < 1e-6  # -log(sum softmax); ~0 up to float precision
-    assert m.alpha == 0.0  # nothing masked away
+    # alpha is 0/0 here. It must be NaN, not 0.0 -- a 0.0 would be silently
+    # averaged into condition means and pull them toward zero.
+    assert math.isnan(m.alpha)
 
 
 def test_alpha_one_when_only_refusals_masked():
@@ -71,15 +73,30 @@ def test_alpha_one_when_only_refusals_masked():
     assert abs(m.alpha - 1.0) < 1e-6
 
 
-def test_entropy_pre_matches_manual_and_is_bounded():
+def test_entropy_pre_matches_manual_and_is_bounded_in_bits():
     V = 128
     R = torch.tensor([3, 4, 5])
     p_free, p_con, allowed = _dists(V, masked_ids=R.tolist())
     forced = int(torch.argmax(p_con).item())
     m = compute_metrics(p_free, p_con, allowed, R, forced)
-    manual = float(-(p_free.double() * p_free.double().log()).sum())
-    assert abs(m.H_pre - manual) < 1e-6
-    assert 0.0 <= m.H_pre <= math.log(V) + 1e-6     # bounded by log|V|
+    manual_bits = float(-(p_free.double() * p_free.double().log2()).sum())
+    assert abs(m.H_pre - manual_bits) < 1e-6
+    assert 0.0 <= m.H_pre <= math.log2(V) + 1e-6    # bounded by log2|V| = 7 bits
+
+
+def test_h_post_is_bounded_by_log2_n_allowed():
+    """The Discussion claim: served entropy can never exceed a bound the GRAMMAR
+    author picks. 0 bits at a literal, log2(k) with k allowed tokens."""
+    V = 256
+    R = torch.tensor([0, 1])
+    for k in (1, 4, 90):
+        logits = torch.randn(V)
+        allowed = torch.zeros(V, dtype=torch.bool)
+        allowed[torch.randperm(V)[:k]] = True
+        masked = torch.where(allowed, logits, torch.full_like(logits, float("-inf")))
+        p_free, p_con = torch.softmax(logits, -1), torch.softmax(masked, -1)
+        m = compute_metrics(p_free, p_con, allowed, R, int(p_con.argmax()))
+        assert m.H_post <= math.log2(k) + 1e-6
 
 
 def test_masking_reduces_served_entropy():

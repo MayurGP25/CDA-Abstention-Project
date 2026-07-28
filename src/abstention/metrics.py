@@ -20,16 +20,22 @@ Why the reverse KL for M2, and its closed form:
     i.e. "how much free probability mass the grammar removed." We compute that
     directly -- cheaper and numerically cleaner than the explicit sum.
 
+Entropies are reported in BITS (log base 2), matching the UQ literature we
+compare against (Toney-Wails & Wails 2025; Kuhn et al. 2023 report bits). The
+internal math is natural-log and converted once at the end.
+
 Everything here is pure torch math with no xgrammar/model dependency, so it is
 unit-testable on CPU with synthetic distributions (see tests/test_metrics.py).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
 
 _EPS = 1e-12
+_LN2 = math.log(2.0)
 
 
 @dataclass
@@ -40,9 +46,16 @@ class StepMetrics:
     s: float        # M4 surprisal of the forced token under the free dist
     n_allowed: int  # size of the grammar-allowed set at this step
     forced_id: int  # token id actually emitted
-    H_pre: float    # latent entropy: Shannon entropy of the PRE-mask P_free (nats)
-    H_post: float   # served entropy: Shannon entropy of the POST-mask P_con (nats)
+    H_pre: float    # latent entropy: Shannon entropy of the PRE-mask P_free (BITS)
+    H_post: float   # served entropy: Shannon entropy of the POST-mask P_con (BITS)
     sr: float = float("nan")  # sequence-level refusal logprob (set by decode loop)
+    # --- context annotations, set by the decode loop (not by compute_metrics) ---
+    t_star: int = -1          # anchor position for this generation (-1 = not found)
+    ctx_open: bool = False    # context ends at a JSON string-VALUE opening quote,
+                              # i.e. a syntactically fresh sentence start where a
+                              # refusal would be a grammatical continuation. This is
+                              # the fair comparison point against t0 -- it separates
+                              # "JSON format shift" from "semantic commitment".
 
 
 def compute_metrics(
@@ -71,10 +84,13 @@ def compute_metrics(
     mu = p_free[refusal_ids].sum()
 
     # M3 -- abstention-attributable share of the masked-away probability.
+    # UNDEFINED (not 0) when the grammar masked nothing away: 0/0. Returning 0.0
+    # there would silently pull condition means toward zero in the free arm.
     removed_total = p_free[disallowed].sum()
     r_disallowed = disallowed[refusal_ids]                       # which R are masked
     removed_refuse = (p_free[refusal_ids] * r_disallowed).sum()
-    alpha = removed_refuse / removed_total.clamp_min(_EPS)
+    alpha = (removed_refuse / removed_total) if float(removed_total) > _EPS \
+        else torch.tensor(float("nan"), dtype=p_free.dtype)
 
     # M2 -- coercion force = reverse KL(P_con || P_free) = -log Z_A, where Z_A is
     # the free probability mass on the grammar-allowed set. p_con is unused here
@@ -86,14 +102,18 @@ def compute_metrics(
     # M4 -- surprisal of the forced token under the free distribution.
     s = -(p_free[forced_id].clamp_min(_EPS)).log()
 
-    # Entropy (nats), computed EXACTLY from the full distributions in hand (no
-    # top-N truncation). H_pre = latent uncertainty in the pre-mask P_free;
-    # H_post = served uncertainty after the grammar masks the support. At a
-    # literal/forced position (n_allowed small) H_post -> 0 while H_pre can stay
-    # high -- the served-vs-latent gap H_pre - H_post is the decoupling signal.
-    H_pre = -(p_free.clamp_min(_EPS) * p_free.clamp_min(_EPS).log()).sum()
+    # Entropy (BITS), computed EXACTLY from the full distributions in hand (no
+    # top-N truncation -- the edge over API-bound UQ work, which sees only the
+    # top ~20 logprobs). H_pre = latent uncertainty in the pre-mask P_free;
+    # H_post = served uncertainty after the grammar masks the support.
+    #
+    # Note H_post <= log2(n_allowed), a bound the GRAMMAR AUTHOR sets, not the
+    # model: 0 bits at a literal position, log2(90)=6.5 bits at the verb slot.
+    # That is why output-side entropy carries no information about latent
+    # preference -- see paper Discussion.
+    H_pre = -(p_free.clamp_min(_EPS) * p_free.clamp_min(_EPS).log()).sum() / _LN2
     pc = p_con[p_con > 0]                       # post-mask support only
-    H_post = -(pc * pc.log()).sum() if pc.numel() else p_con.new_zeros(())
+    H_post = (-(pc * pc.log()).sum() / _LN2) if pc.numel() else p_con.new_zeros(())
 
     return StepMetrics(
         mu=float(mu),
