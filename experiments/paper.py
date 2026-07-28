@@ -142,7 +142,52 @@ def table1_markdown(t: pd.DataFrame) -> str:
 # --------------------------------------------------------------------------- #
 # Figure 1
 # --------------------------------------------------------------------------- #
-def figure1(df: pd.DataFrame, lm: pd.DataFrame, out: Path, model: str):
+def figure1(lm: pd.DataFrame, out: Path, model: str):
+    """THE figure: the two metrics at the three landmarks, per-prompt mean +/- 1 SEM.
+
+    Landmarks, not the raw position curve, because P_refuse between landmarks is
+    dominated by SYNTACTIC AVAILABILITY, not preference: a refusal phrase cannot
+    begin in the middle of `"step1":`, so P_refuse reads ~0 at those positions and
+    jumps back up at the next sentence start. Averaging across positions therefore
+    measures token-boundary structure. Only t0 / t_open / t_star are mutually
+    comparable -- all three are positions where a refusal could grammatically begin.
+    """
+    g = lm[lm.model == model]
+    order = ["t0", "t_open", "t_star"]
+    x = np.arange(len(order))
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.0))
+    colours = {"harmful_forced": "tab:red", "benign_forced": "tab:blue"}
+    marks = {"harmful_forced": "o", "benign_forced": "s"}
+
+    for ax, col, ylab, logy in [(axes[0], "P_refuse", "P(refusal opener)", True),
+                                (axes[1], "H_pre", "pre-mask entropy (bits)", False)]:
+        for cond in ARMS:
+            sub = g[g.condition == cond]
+            if sub.empty:
+                continue
+            m = [sub[sub.landmark == k][col].mean() for k in order]
+            e = [sub[sub.landmark == k][col].sem() for k in order]
+            ax.errorbar(x, m, yerr=e, marker=marks[cond], color=colours[cond],
+                        capsize=3, lw=1.6, label=cond)
+        if logy:
+            ax.set_yscale("log")
+        ax.set_xticks(x)
+        ax.set_xticklabels(["$t_0$\n(pre-constraint)", "$t_{open}$\n(in JSON,\nsentence start)",
+                            "$t^*$\n(after 'Step 1:')"], fontsize=8)
+        ax.set_ylabel(ylab)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=.25, axis="y")
+
+    fig.suptitle(f"Refusal preference and latent entropy at the three landmarks — {model}",
+                 fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
+def figure_appendix_positions(df: pd.DataFrame, lm: pd.DataFrame, out: Path, model: str):
+    """Appendix: the raw position curve, with the syntax caveat on the figure so it
+    cannot be misread as belief oscillating."""
     d = df[(df.model == model) & (df.condition.isin(ARMS))].copy()
     d["P_refuse"] = np.exp(d["sr"]).clip(lower=P_FLOOR)
 
@@ -176,7 +221,9 @@ def figure1(df: pd.DataFrame, lm: pd.DataFrame, out: Path, model: str):
                 ax.annotate(name, (float(pos.median()), ax.get_ylim()[1]),
                             fontsize=7, color=colour, ha="center", va="top")
 
-    fig.suptitle(f"Refusal preference and latent entropy under forced decoding — {model}")
+    fig.suptitle(f"Appendix: per-position values — {model}\n"
+                 "P(refusal opener) between landmarks reflects SYNTACTIC AVAILABILITY "
+                 "(a refusal cannot begin mid-word), not preference.", fontsize=9)
     fig.tight_layout()
     fig.savefig(out, dpi=200)
     plt.close(fig)
@@ -209,7 +256,8 @@ def main():
     print("\n===== Table 1 =====\n" + md)
 
     for model in sorted(df.model.unique()):
-        figure1(df, lm, outdir / f"fig1_{_slug(model)}.png", model)
+        figure1(lm, outdir / f"fig1_{_slug(model)}.png", model)
+        figure_appendix_positions(df, lm, outdir / f"figA_positions_{_slug(model)}.png", model)
 
     # ---- the two supporting sentences ------------------------------------- #
     print("\n===== supporting sentences =====")

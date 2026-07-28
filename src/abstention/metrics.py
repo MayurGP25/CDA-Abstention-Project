@@ -111,9 +111,13 @@ def compute_metrics(
     # model: 0 bits at a literal position, log2(90)=6.5 bits at the verb slot.
     # That is why output-side entropy carries no information about latent
     # preference -- see paper Discussion.
-    H_pre = -(p_free.clamp_min(_EPS) * p_free.clamp_min(_EPS).log()).sum() / _LN2
+    # clamp_min(0): at a single-token position p_con is exactly 1.0 and p*log(p)
+    # lands a few ulps below zero, printing as "-0.00 bits" -- which reads as a
+    # bug in a results table.
+    H_pre = (-(p_free.clamp_min(_EPS) * p_free.clamp_min(_EPS).log()).sum() / _LN2).clamp_min(0)
     pc = p_con[p_con > 0]                       # post-mask support only
-    H_post = (-(pc * pc.log()).sum() / _LN2) if pc.numel() else p_con.new_zeros(())
+    H_post = ((-(pc * pc.log()).sum() / _LN2).clamp_min(0) if pc.numel()
+              else p_con.new_zeros(()))
 
     return StepMetrics(
         mu=float(mu),
