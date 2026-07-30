@@ -94,12 +94,20 @@ def main():
                     help="override restoration_positions from experiment.yaml")
     args = ap.parse_args()
 
-    run_dir = runner.results_dir(args.exp) / f"{args.model}__{args.bench}"
+    # Computed directly rather than via runner.results_dir(), because `runner`
+    # pulls in torch/xgrammar and is imported lazily below -- --summary-only must
+    # work on a box with no GPU stack.
+    run_dir = (Path(__file__).resolve().parents[1] / "results" / args.exp
+               / f"{args.model}__{args.bench}")
+    run_dir.mkdir(parents=True, exist_ok=True)
     out = run_dir / f"{args.model}__{args.bench}.parquet"
 
     if args.summary_only:
         shards.merge(run_dir, out)
-        summarise(out)
+        if out.exists():
+            summarise(out)
+        else:
+            print(f"[restore] nothing collected yet for {run_dir.name}")
         return
 
     _install_signal_handlers()
