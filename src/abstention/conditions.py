@@ -14,11 +14,16 @@ from .decode_loop import run
 from .model_loader import LoadedModel
 
 
-def _rows(metrics, *, condition, prompt_id, model_id):
+def _rows(metrics, *, condition, prompt_id, model_id, grammar_name, prompt_source):
     return [
         dict(
             model=model_id,
             condition=condition,
+            # Without these two, a forced_steps run and a neutral_scaffold run
+            # both label their rows "harmful_forced", and pointing paper.py at
+            # both parquets silently merges them into one condition.
+            grammar=grammar_name,
+            prompt_source=prompt_source,
             prompt_id=prompt_id,
             pos=i,
             mu=m.mu,
@@ -51,6 +56,8 @@ def run_condition(
     sr_stride: int = 1,
     anchor: str = "Step 1:",
     sr_window: int = 12,
+    grammar_name: str = "?",
+    prompt_source: str = "?",
 ) -> tuple[list[dict], list[int]]:
     """Run one (condition, prompt) unit. Returns (tidy rows, emitted token ids).
 
@@ -71,5 +78,8 @@ def run_condition(
         anchor=anchor,
         sr_window=sr_window,
     )
-    rows = _rows(metrics, condition=condition, prompt_id=prompt_id, model_id=lm.model_id)
+    rows = _rows(metrics, condition=condition, prompt_id=prompt_id,
+                 model_id=lm.model_id,
+                 grammar_name=("none" if grammar is None else grammar_name),
+                 prompt_source=prompt_source)
     return rows, emitted

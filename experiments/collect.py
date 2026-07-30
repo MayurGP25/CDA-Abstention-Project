@@ -68,6 +68,14 @@ def main():
     ap.add_argument("--fresh", action="store_true", help="discard existing shards")
     ap.add_argument("--merge-only", action="store_true",
                     help="rebuild the parquet from existing shards; no GPU needed")
+    ap.add_argument("--conditions", nargs="+", default=None,
+                    choices=["harmful_forced", "benign_forced", "free"],
+                    help="run only these arms (default: all three). Use for cheap "
+                         "single-arm ablations, e.g. the neutral-scaffold control.")
+    ap.add_argument("--benign-source", default=None,
+                    help="override configs/experiment.yaml benign_source "
+                         "(alpaca | xstest). xstest gives the HARD negative: "
+                         "safe-but-scary prompts that are not trivially separable.")
     args = ap.parse_args()
 
     run_dir = runner.results_dir(args.exp) / f"{args.model}__{args.bench}"
@@ -79,6 +87,8 @@ def main():
 
     _install_signal_handlers()
     lm, grammar, schema, exp_cfg, models_cfg = runner.setup(args.model)
+    if args.benign_source:                     # must precede the fingerprint
+        exp_cfg["benign_source"] = args.benign_source
 
     harmful = runner.harmful_prompts(exp_cfg, args.bench)
     benign = runner.benign_prompts(exp_cfg)
@@ -104,12 +114,17 @@ def main():
     T = exp_cfg["max_new_tokens"]
     T_free = exp_cfg.get("free_max_new_tokens", 8)
 
-    # (condition, prompt, max_new_tokens, grammar, measure_sr)
+    g_name = exp_cfg["grammar"]["name"]
+    h_src, b_src = args.bench, exp_cfg.get("benign_source", "alpaca")
+
+    # (condition, prompt, max_new_tokens, grammar, measure_sr, prompt_source)
     units = (
-        [("harmful_forced", p, T, grammar, True) for p in harmful]
-        + [("benign_forced", p, T, grammar, True) for p in benign]
-        + [("free", p, T_free, None, False) for p in harmful]
+        [("harmful_forced", p, T, grammar, True, h_src) for p in harmful]
+        + [("benign_forced", p, T, grammar, True, b_src) for p in benign]
+        + [("free", p, T_free, None, False, h_src) for p in harmful]
     )
+    if args.conditions:
+        units = [u for u in units if u[0] in set(args.conditions)]
 
     done = shards.completed(shard_dir)
     todo = [u for u in units if shards.unit_key(u[0], u[1]["id"]) not in done]
@@ -118,7 +133,7 @@ def main():
 
     failures: list[str] = []
     bar = tqdm(todo, desc="units")
-    for cond, p, max_tok, gram, measure_sr in bar:
+    for cond, p, max_tok, gram, measure_sr, psrc in bar:
         if _STOP:
             break
         key = shards.unit_key(cond, p["id"])
@@ -132,6 +147,7 @@ def main():
                     max_new_tokens=max_tok,
                     refusal_prefix_ids=prefix_ids if measure_sr else None,
                     sr_stride=stride, anchor=anchor, sr_window=window,
+                    grammar_name=g_name, prompt_source=psrc,
                 )
                 # Behavioural fact for the free arm. Store the BOOLEAN ONLY --
                 # never persist decoded generations (RESPONSIBLE_USE).
