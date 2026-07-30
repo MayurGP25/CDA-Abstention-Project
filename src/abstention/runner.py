@@ -99,6 +99,14 @@ def run_fingerprint(lm, exp_cfg, models_cfg, schema, prompt_ids) -> dict:
 
     collect.py hard-stops on mismatch rather than silently combining runs with
     different settings -- the failure mode that quietly ruins a result.
+
+    The PROMPT SET is deliberately excluded from the digest. Shards are keyed by
+    (condition, prompt_id), so running --n 50 after --n 5 simply adds shards; the
+    existing ones stay valid because --n truncates a fixed-seed sample rather
+    than resampling. Including the id list would make every change of --n look
+    like an incompatible run. Anything that WOULD change the numbers for a given
+    prompt (model, grammar, token budgets, anchor, stride, refusal set, seed) is
+    still in the digest. The id list is recorded alongside it for provenance.
     """
     g = exp_cfg["grammar"]
     payload = dict(
@@ -115,11 +123,11 @@ def run_fingerprint(lm, exp_cfg, models_cfg, schema, prompt_ids) -> dict:
         prefix_set_hash=refusal_score.prefix_set_hash(),
         benign_source=exp_cfg.get("benign_source", "alpaca"),
         seed=exp_cfg["seed"],
-        prompt_ids=sorted(prompt_ids),
     )
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    return {"digest": digest, **payload}
+    # prompt_ids is provenance only -- recorded, not gated (see docstring).
+    return {"digest": digest, **payload, "prompt_ids": sorted(prompt_ids)}
 
 
 def harmful_prompts(exp_cfg, bench: str):

@@ -79,6 +79,16 @@ def test_fresh_discards_incompatible_shards(tmp_path):
     assert shards.completed(run / "shards") == set() or not (run / "shards").exists()
 
 
+def test_growing_the_prompt_set_is_not_a_mismatch(tmp_path):
+    """--n 5 then --n 50 must resume, not hard-stop. Shards are keyed by
+    prompt_id, so a larger run only adds shards. prompt_ids is provenance, so it
+    differs between the two manifests while the digest stays equal."""
+    run = tmp_path / "run"
+    shards.check_fingerprint(run, {"digest": "same", "prompt_ids": ["a", "b"]})
+    shards.check_fingerprint(run, {"digest": "same",
+                                   "prompt_ids": ["a", "b", "c", "d"]})   # no raise
+
+
 def test_progress_jsonl_appends_and_survives_reopen(tmp_path):
     p = tmp_path / "progress.jsonl"
     shards.append_jsonl(p, {"unit": "a", "status": "ok"})
