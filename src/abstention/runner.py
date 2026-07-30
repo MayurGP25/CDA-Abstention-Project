@@ -35,9 +35,22 @@ def get_model_spec(models_cfg, model_key):
     raise KeyError(f"model key '{model_key}' not in models.yaml")
 
 
-def setup(model_key: str):
-    """Load model + grammar. Returns (lm, grammar, schema, exp_cfg, models_cfg)."""
+def setup(model_key: str, overrides: dict | None = None):
+    """Load model + grammar. Returns (lm, grammar, schema, exp_cfg, models_cfg).
+
+    `overrides` patches exp_cfg BEFORE the grammar is compiled, so ablation arms
+    (a different grammar, anchor, or token budget) can be launched from the CLI
+    without editing configs/experiment.yaml between runs -- which would otherwise
+    make a multi-run script race against its own config file.
+    """
     models_cfg, exp_cfg = load_configs()
+    for k, v in (overrides or {}).items():
+        if v is None:
+            continue
+        if k == "grammar_name":
+            exp_cfg["grammar"]["name"] = v
+        else:
+            exp_cfg[k] = v
     spec = get_model_spec(models_cfg, model_key)
     lm = load(
         spec["model_id"],

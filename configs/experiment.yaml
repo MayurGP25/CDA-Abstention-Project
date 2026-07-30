@@ -34,5 +34,7 @@ refusal_score:
   stride: 1
   window_after_tstar: 12   # stop paying for S_R this far past the anchor
 
-# Restoration sweep (E5): positions at which R u {EOS} is re-allowed.
-restoration_positions: [0, 2, 4, 8, 16, 32]
+# Restoration sweep: positions at which R u {EOS} is re-admitted, chosen to
+# bracket the landmarks (t0=0, t_open~8, t*~12) so the escape-rate curve can be
+# read against the P_refuse collapse.
+restoration_positions: [0, 2, 4, 6, 8, 10, 12, 16]

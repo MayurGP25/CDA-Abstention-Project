@@ -76,6 +76,14 @@ def main():
                     help="override configs/experiment.yaml benign_source "
                          "(alpaca | xstest). xstest gives the HARD negative: "
                          "safe-but-scary prompts that are not trivially separable.")
+    # Config overrides, so ablation arms launch from one script without editing YAML.
+    ap.add_argument("--grammar", default=None,
+                    help="override grammar.name (forced_steps | neutral_scaffold | ...)")
+    ap.add_argument("--anchor", default=None,
+                    help="override the anchor literal. Pass '' for grammars with no "
+                         "anchor (neutral_scaffold) -- t_star then reports -1 and "
+                         "paper.py simply omits that landmark.")
+    ap.add_argument("--max-new-tokens", type=int, default=None)
     args = ap.parse_args()
 
     run_dir = runner.results_dir(args.exp) / f"{args.model}__{args.bench}"
@@ -86,7 +94,9 @@ def main():
         return
 
     _install_signal_handlers()
-    lm, grammar, schema, exp_cfg, models_cfg = runner.setup(args.model)
+    lm, grammar, schema, exp_cfg, models_cfg = runner.setup(args.model, overrides=dict(
+        grammar_name=args.grammar, anchor=args.anchor,
+        max_new_tokens=args.max_new_tokens))
     if args.benign_source:                     # must precede the fingerprint
         exp_cfg["benign_source"] = args.benign_source
 
