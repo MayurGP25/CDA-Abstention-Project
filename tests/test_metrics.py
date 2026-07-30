@@ -99,14 +99,28 @@ def test_h_post_is_bounded_by_log2_n_allowed():
         assert m.H_post <= math.log2(k) + 1e-6
 
 
-def test_masking_reduces_served_entropy():
-    # Masking shrinks the support, so served (post-mask) entropy <= latent.
-    V = 64
-    R = torch.tensor([1, 2, 3])
-    p_free, p_con, allowed = _dists(V, masked_ids=[1, 2, 3, 20, 21])
-    forced = int(torch.argmax(p_con).item())
-    m = compute_metrics(p_free, p_con, allowed, R, forced)
-    assert m.H_post <= m.H_pre + 1e-9
+def test_served_entropy_can_EXCEED_latent_entropy():
+    """Masking shrinks the support but RENORMALISES, so H_post is NOT bounded by
+    H_pre. When the mask removes the peak, what remains is flatter and served
+    entropy goes UP.
+
+    This is not a corner case -- it is what the grammar does at t0. Observed on
+    Qwen2.5-7B/HarmBench: H_pre = 0.03 bits (the model is near-certain it wants
+    to refuse) while H_post = 1.02 bits over the 5 allowed JSON-opening tokens.
+    Output-side UQ there reports 34x MORE uncertainty than the model has.
+    """
+    V = 8
+    R = torch.tensor([0])
+    logits = torch.tensor([10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # peaked on 0
+    p_free = torch.softmax(logits, dim=-1)
+    allowed = torch.ones(V, dtype=torch.bool)
+    allowed[0] = False                                   # mask the peak away
+    masked = torch.where(allowed, logits, torch.full_like(logits, float("-inf")))
+    p_con = torch.softmax(masked, dim=-1)
+    m = compute_metrics(p_free, p_con, allowed, R, 1)
+    assert m.H_pre < 0.1                                 # model is near-certain
+    assert m.H_post > m.H_pre                            # served entropy is HIGHER
+    assert m.H_post <= math.log2(int(allowed.sum())) + 1e-6   # the real bound
 
 
 def test_forced_literal_position_has_zero_served_entropy():
