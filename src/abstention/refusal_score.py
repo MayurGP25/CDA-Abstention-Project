@@ -82,12 +82,23 @@ def sequence_refusal_logprob(
     prefix_id_lists: list[list[int]],
     device,
     pad_id: int = 0,
+    chunk: int = 8,
 ) -> float:
-    """log sum_r P(r | ctx), one batched forward over the refusal prefixes.
+    """log sum_r P(r | ctx), batched over the refusal prefixes.
 
     ctx_ids : (L,) the full context so far (chat-templated prompt + generated).
     Returns log sum_r P(r | ctx); exp() approximates the refusal-prefix
     probability mass (prefix-free set, so near mutually exclusive).
+
+    MEMORY. A naive implementation materialises the full (P, L+maxk, |V|) logit
+    tensor and casts it to fp32. With 28 prefixes, |V| = 152k and a long system
+    prompt that is tens of gigabytes, which is what made the `schema` arm of the
+    format sweep OOM on a 24 GB card while the shorter arms were fine.
+
+    Two fixes, both needed. We ask the model for only the last maxk+1 positions
+    where the installed transformers supports it, since those are exactly the
+    ones that predict the prefix tokens, and we process the prefixes in chunks so
+    peak memory does not scale with P. Neither changes the returned value.
     """
     P = len(prefix_id_lists)
     if P == 0:
@@ -95,24 +106,36 @@ def sequence_refusal_logprob(
     L = int(ctx_ids.shape[0])
     maxk = max(len(r) for r in prefix_id_lists)
     seqlen = L + maxk
-
-    batch = torch.full((P, seqlen), pad_id, dtype=torch.long, device=device)
-    attn = torch.zeros((P, seqlen), dtype=torch.long, device=device)
-    for p, r in enumerate(prefix_id_lists):
-        k = len(r)
-        batch[p, :L] = ctx_ids
-        batch[p, L:L + k] = torch.tensor(r, dtype=torch.long, device=device)
-        attn[p, :L + k] = 1
-
-    logits = model(input_ids=batch, attention_mask=attn).logits.float()
-    logprobs = F.log_softmax(logits, dim=-1)
+    keep = maxk + 1                      # positions L-1 .. L+maxk-1
 
     seq_lp = torch.empty(P, device=device)
-    for p, r in enumerate(prefix_id_lists):
-        k = len(r)
-        # logits at positions L-1 .. L-1+k-1 predict r[0 .. k-1]
-        pos = torch.arange(L - 1, L - 1 + k, device=device)
-        toks = torch.tensor(r, dtype=torch.long, device=device)
-        seq_lp[p] = logprobs[p, pos, toks].sum()
+    for s in range(0, P, max(1, chunk)):
+        group = prefix_id_lists[s:s + max(1, chunk)]
+        g = len(group)
+        batch = torch.full((g, seqlen), pad_id, dtype=torch.long, device=device)
+        attn = torch.zeros((g, seqlen), dtype=torch.long, device=device)
+        for i, r in enumerate(group):
+            k = len(r)
+            batch[i, :L] = ctx_ids
+            batch[i, L:L + k] = torch.tensor(r, dtype=torch.long, device=device)
+            attn[i, :L + k] = 1
+
+        # `logits_to_keep` (older name: num_logits_to_keep) makes the model emit
+        # only the trailing positions. Fall back to the full tensor, sliced
+        # before the fp32 cast, on versions that do not accept it.
+        try:
+            out = model(input_ids=batch, attention_mask=attn, logits_to_keep=keep)
+            lg = out.logits
+        except TypeError:
+            lg = model(input_ids=batch, attention_mask=attn).logits[:, -keep:, :]
+        # index 0 of `lg` is absolute position seqlen-keep == L-1
+        logprobs = F.log_softmax(lg.float(), dim=-1)
+
+        for i, r in enumerate(group):
+            k = len(r)
+            pos = torch.arange(0, k, device=device)        # L-1 .. L-1+k-1
+            toks = torch.tensor(r, dtype=torch.long, device=device)
+            seq_lp[s + i] = logprobs[i, pos, toks].sum()
+        del batch, attn, lg, logprobs
 
     return float(torch.logsumexp(seq_lp, dim=0))
