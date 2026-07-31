@@ -123,7 +123,13 @@ def at_landmarks(df: pd.DataFrame) -> pd.DataFrame:
             # they need no refusal phrase list at all, so they establish that
             # belief left the allowed set without depending on how refusal is
             # spelled. P_refuse then says *what* left.
-            R_mass = float(np.exp(-float(row["D"]))) if np.isfinite(row["D"]) else np.nan
+            # D is stored in NATS. It is exactly KL(P_mask || P_free): masking
+            # renormalises, so the divergence collapses to -log R. Reporting it
+            # as a KL puts the quantity in standard UQ vocabulary, while the
+            # retained mass says the same thing more legibly.
+            D_nats = float(row["D"])
+            R_mass = float(np.exp(-D_nats)) if np.isfinite(D_nats) else np.nan
+            KL_bits = D_nats / np.log(2.0) if np.isfinite(D_nats) else np.nan
             out.append(dict(
                 model=model, grammar=gram, condition=cond, prompt_source=src,
                 prompt_id=pid, landmark=name, pos=pos,
@@ -133,6 +139,7 @@ def at_landmarks(df: pd.DataFrame) -> pd.DataFrame:
                 n_allowed=int(row["n_allowed"]),
                 R_mass=R_mass,
                 E_mass=(1.0 - R_mass) if np.isfinite(R_mass) else np.nan,
+                KL_bits=KL_bits,
             ))
     return pd.DataFrame(out)
 
@@ -162,7 +169,8 @@ def table1(lm: pd.DataFrame) -> pd.DataFrame:
                        n_allowed_median=float(h["n_allowed"].median()),
                        H_post_harmful=float(h["H_post"].mean()),
                        R_mass_harmful=float(h["R_mass"].mean()),
-                       E_mass_harmful=float(h["E_mass"].mean()))
+                       E_mass_harmful=float(h["E_mass"].mean()),
+                       KL_bits_harmful=float(h["KL_bits"].mean()))
             for metric in ("P_refuse", "H_pre"):
                 hv, bv = h[metric].dropna(), b[metric].dropna()
                 rec[f"{metric}_harmful"] = float(hv.mean()) if len(hv) else np.nan
@@ -212,8 +220,8 @@ def _auroc_ci_cell(r, metric) -> str:
 def table1_markdown(t: pd.DataFrame) -> str:
     lines = ["| model | grammar | landmark | pos | benign src | n | P_refuse (harm) | "
              "P_refuse (benign) | AUROC [95% CI] | H_pre (harm) | H_pre (benign) | "
-             "AUROC [95% CI] | n_allowed | retained R | escape 1-R | H_post |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "AUROC [95% CI] | n_allowed | retained R | KL bits | H_post |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in t.iterrows():
         lines.append(
             f"| {r.model.split('/')[-1]} | {r.grammar} | {r.landmark} | "
@@ -224,7 +232,7 @@ def table1_markdown(t: pd.DataFrame) -> str:
             f"{_auroc_ci_cell(r, 'H_pre')} | "
             f"{r.n_allowed_median:.0f} | "
             f"{('%.2e' % r.R_mass_harmful) if r.R_mass_harmful < 1e-3 else ('%.4f' % r.R_mass_harmful)} | "
-            f"{r.E_mass_harmful:.4f} | {r.H_post_harmful:.2f} |")
+            f"{r.KL_bits_harmful:.1f} | {r.H_post_harmful:.2f} |")
     lines.append("")
     lines.append("AUROC = P(harmful ranks above benign). [INV] marks a value below 0.5, "
                  "i.e. the harmful arm ranks *lower* -- a signed result, not an error. "
@@ -537,10 +545,11 @@ def main():
                 fmt = "{:.3e}" if r[k] < 1e-3 else "{:.4f}"
                 pct = ("{:.4g}".format(100 * r[k]) if r[k] < 1e-3
                        else "{:.2f}".format(100 * r[k]))
+                kl = g[g.landmark == k]["KL_bits"].mean()
                 print(f"   {k:7s} retained {fmt.format(r[k])} "
                       f"[95% CI {fmt.format(lo)}, {fmt.format(hi)}]"
-                      f"  ->  the served distribution renormalises {pct}% "
-                      f"of the model's belief")
+                      f"   KL(P_mask||P_free) = {kl:.1f} bits"
+                      f"  ->  renormalises {pct}% of the model's belief")
 
     # ---- the collapse decomposition, printed as a decision aid ------------- #
     print("\n===== collapse decomposition (harmful arm) =====")

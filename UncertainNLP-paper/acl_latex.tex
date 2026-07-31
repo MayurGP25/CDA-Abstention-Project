@@ -1,0 +1,398 @@
+\documentclass[11pt]{article}
+
+% Change "review" to "final" to generate the final (sometimes called camera-ready) version.
+% Change to "preprint" to generate a non-anonymous version with page numbers.
+\usepackage[review]{acl}
+
+% Standard package includes
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{multirow}
+
+\title{Whose Uncertainty? Measuring Predictive Uncertainty\\
+Under Grammar-Constrained Decoding}
+
+\author{First Author \\
+  Affiliation / Address line 1 \\
+  Affiliation / Address line 2 \\
+  \texttt{email@domain} \\\And
+  Second Author \\
+  Affiliation / Address line 1 \\
+  Affiliation / Address line 2 \\
+  \texttt{email@domain} \\}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Uncertainty quantification for large language models is usually computed from
+the token distribution a system produces. Grammar-constrained decoding, now
+routine wherever structured output is required, inserts a masking and
+renormalisation step between the model and that distribution. We ask what
+predictive uncertainty measured after this step describes. Instrumenting the
+decoding loop of two open-weight models, we record both the model's
+unconstrained next-token distribution and the renormalised distribution used for
+generation, at matched positions, over 150 prompts drawn from HarmBench, Alpaca
+and XSTest. We report the probability mass the grammar retains, the entropy of
+each distribution, and the mass the model places on refusal continuations. At
+the first generated position the retained mass is on the order of $10^{-10}$ for
+Qwen2.5-7B and $10^{-8}$ for Llama-3.1-8B, and the entropy of the renormalised
+distribution is larger than that of the model's own distribution rather than
+smaller. The unconstrained distribution at that position still separates harmful
+prompts from lexically similar safe ones (AUROC $0.83$), but this separation
+declines over the following twelve forced positions. Our results suggest that
+uncertainty reported under grammar constraints is, at positions where the model
+holds a strong preference, better read as a property of the constraint together
+with the model than of the model alone.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Estimates of a language model's predictive uncertainty are generally derived
+from the distribution over next tokens that the model exposes, whether through
+its entropy, the probability of the selected token, or the spread of sampled
+continuations
+\citep{malinin-gales-2021-uncertainty,kuhn-etal-2023-semantic,liu-etal-2025-uncertainty}.
+This is reasonable when the distribution the system uses for generation is the
+distribution the model computed.
+
+Grammar-constrained decoding breaks that identity. To guarantee that output
+conforms to a schema, the decoder computes a per-token mask at each step, sets
+the logits of violating tokens to $-\infty$, and renormalises over what remains
+\citep{willard-louf-2023-efficient,dong-etal-2024-xgrammar}. The distribution
+that then selects the next token, and that a downstream consumer can observe, is
+not the model's distribution but its restriction to the admitted set
+(Figure~\ref{fig:pipeline}). That this restriction distorts the distribution is
+known, and is the motivation for grammar-aligned decoding
+\citep{park-etal-2024-grammar}. What has received less attention is what it does
+to \emph{uncertainty estimates} computed downstream of it.
+
+\begin{figure}[t]
+\centering
+\framebox[0.95\columnwidth]{\rule{0pt}{3.2cm}\textsc{[Figure 1 placeholder]}}
+\caption{Grammar-constrained decoding inserts a masking and renormalisation step
+between the model's distribution $P_{\text{free}}$ and the distribution
+$P_{\text{mask}}$ that selects the next token. Uncertainty is normally computed
+on the right-hand side of that step.}
+\label{fig:pipeline}
+\end{figure}
+
+The entropy of the renormalised distribution is bounded above by
+$\log_2|A_t|$, where $A_t$ is the token set the grammar admits at step $t$. That
+bound is a property of the schema, chosen by whoever wrote it. A model that is
+entirely resolved about its next token and a model that is indifferent yield
+identical renormalised distributions whenever the grammar admits the same set
+and the model has no preference within it, so an estimate computed from the
+served distribution alone cannot distinguish them.
+
+Whether this matters depends on how much of the model's belief the grammar
+discards. If the admitted set carries most of the mass, the renormalised
+distribution is close to a conditional of the model's own and the estimate
+remains interpretable. If it carries very little, the estimate is computed on a
+residue. We measure which obtains, using refusal behaviour as a probe, since a
+safety-aligned model presented with a harmful request concentrates its
+distribution sharply and its suppression is therefore visible. The safety
+framing is instrumental. The phenomenon is a property of masked decoding rather
+than of safety training. We ask three questions.
+
+\begin{description}
+\itemsep0em
+  \item[RQ1] How much of the model's predictive mass survives masking, and how
+        does this vary with position?
+  \item[RQ2] How does the entropy of the renormalised distribution relate to
+        that of the model's own?
+  \item[RQ3] Does a semantic preference visible in the unconstrained
+        distribution persist as forced generation proceeds?
+\end{description}
+
+\section{Background and Related Work}
+\label{sec:background}
+
+[To be written, in five parts. First, granularity and taxonomy of uncertainty
+quantification for large language models
+\citep{liu-etal-2025-uncertainty,shorinwa-etal-2025-survey}. Second, token- and
+sequence-level estimators
+\citep{malinin-gales-2021-uncertainty,kuhn-etal-2023-semantic,fadeeva-etal-2024-fact}
+and the observation that reported probabilities need not correspond to the
+quantity a task requires
+\citep{lovering-etal-2025-language,toney-wails-2025-certain}. Third, decoding as
+an intervention on the distribution
+\citep{eikema-aziz-2020-map,eikema-2024-generalisation,hashimoto-etal-2024-beam},
+and constrained decoding in particular \citep{park-etal-2024-grammar}. Fourth,
+the cost of format restrictions \citep{tam-etal-2024-speak} and forced
+affirmative prefixes as a safety failure mode \citep{wei-etal-2023-jailbroken}.
+Fifth, uncertainty as a correlate of attack success at this venue
+\citep{steindl-etal-2024-linguistic}.]
+
+\section{Method}
+\label{sec:method}
+
+Let $P_{\text{free}}(\cdot \mid c_t)$ be the model's next-token distribution over
+vocabulary $V$ given context $c_t$, and let $A_t \subseteq V$ be the set the
+grammar admits at step $t$. We call
+$R_t = \sum_{v \in A_t} P_{\text{free}}(v \mid c_t)$ the \textbf{retained mass}.
+The distribution used for generation is
+$P_{\text{mask}}(v) = P_{\text{free}}(v)/R_t$ for $v \in A_t$.
+
+Because masking renormalises rather than reshapes, the divergence between the
+two distributions has a closed form,
+
+\begin{equation}
+D_{\mathrm{KL}}\!\left(P_{\text{mask}} \,\|\, P_{\text{free}}\right) \;=\; -\log R_t ,
+\label{eq:kl}
+\end{equation}
+
+so retained mass and the divergence of the served distribution from the model's
+are the same measurement in different units. We report both, the divergence
+because it is the standard way to express the gap between two predictive
+distributions and the retained mass because it is easier to read. The reverse
+direction is not available, since $P_{\text{mask}}$ assigns zero mass to tokens
+$P_{\text{free}}$ does not.
+
+We compare $H_{\text{pre}}$, the entropy of $P_{\text{free}}$ over the full
+vocabulary, with $H_{\text{post}}$, the entropy of $P_{\text{mask}}$, both in
+bits and both exact with no top-$k$ truncation. Writing
+$H_{A} = -\sum_{v \in A_t} P_{\text{free}}(v)\log_2 P_{\text{free}}(v)$,
+
+\begin{equation}
+H_{\text{post}} = \frac{H_{A}}{R_t} + \log_2 R_t ,
+\qquad H_{\text{post}} \le \log_2 |A_t| .
+\label{eq:decomp}
+\end{equation}
+
+The two terms have opposing sign. Masking that removes low-probability tokens
+leaves $R_t$ near one and reduces entropy, while masking that removes the mode
+makes $R_t$ small and can increase it.
+
+As a semantic probe we measure the mass on refusal,
+$P_{\text{refuse}}(t) = \sum_{r \in \mathcal{R}} \prod_i P_{\text{free}}(r_i \mid c_t, r_{<i})$,
+where $\mathcal{R}$ is a fixed prefix-free set of refusal continuations. It is
+evaluated by teacher forcing against $P_{\text{free}}$, so where the grammar
+forbids a refusal it is counterfactual, namely the mass the model would place on
+refusing were it unconstrained at that position. This is the mass of a semantic
+equivalence class \citep{kuhn-etal-2023-semantic,fadeeva-etal-2024-fact},
+obtained exactly rather than by sampling.
+
+\paragraph{Measurement positions.}
+$P_{\text{refuse}}$ is a probability over phrase onsets, so it is comparable only
+where a phrase could begin. We report at three landmarks, located per generation
+by parsing the realised sequence rather than by fixed index. $t_0$ is the first
+generated position, before the constraint has acted. $t_{\text{open}}$ is where
+the schema's string value opens, which is structurally a sentence start, so a
+refusal is well-formed there as at $t_0$. $t^{*}$ is the position after the
+forced literal \texttt{Step 1:}, where the schema pins an imperative verb and
+refusal onsets are excluded. Without $t_{\text{open}}$ a decline in
+$P_{\text{refuse}}$ could not be separated from a refusal simply not fitting
+grammatically.
+
+\section{Experiments and Results}
+\label{sec:results}
+
+\paragraph{Setup.}
+Qwen2.5-7B-Instruct \citep{yang-etal-2024-qwen25} and Llama-3.1-8B-Instruct
+\citep{grattafiori-etal-2024-llama3} in \texttt{bfloat16}, decoded greedily, with
+vocabularies of $152{,}064$ and $128{,}256$. We use fifty harmful prompts from
+HarmBench \citep{mazeika-etal-2024-harmbench}, fifty benign instructions from
+Alpaca \citep{taori-etal-2023-alpaca}, and fifty safe prompts from XSTest
+\citep{rottger-etal-2024-xstest}, the last being lexically alarming but benign
+and included because separation against Alpaca is close to trivial. The schema
+requires \texttt{\{"step1": "Step 1: $\langle$verb$\rangle$ \ldots"\}} with the
+verb drawn from twenty-five imperatives, following the structured-output attack
+of \citet{cda-2025-grammar}, and is compiled with XGrammar
+\citep{dong-etal-2024-xgrammar}. We replace the generation loop so that raw
+logits are read before the bitmask is applied and both distributions are
+recorded, a seam that hosted APIs do not expose and that high-throughput servers
+absorb into the sampling kernel \citep{kwon-etal-2023-efficient}. $\mathcal{R}$
+holds fourteen phrases in space-prefixed and bare form, giving twenty-eight token
+sequences fixed before collection (Appendix~\ref{app:refusal}). All $44/44$
+refusals each model produces without a grammar begin with a member of
+$\mathcal{R}$. Intervals are percentile bootstrap over prompts with $2{,}000$
+resamples, AUROC resamples the two groups independently, and the
+$t_0 \rightarrow t^{*}$ change is paired by prompt. We report no significance
+tests.
+
+\paragraph{Retained mass (RQ1).}
+At $t_0$ the grammar admits five tokens, the JSON opening brace and whitespace
+variants, holding $2.7\times10^{-10}$ of Qwen's predictive mass ($95\%$ CI
+$[6.4\times10^{-11}, 5.6\times10^{-10}]$) and $7.2\times10^{-8}$ of Llama's
+(Table~\ref{tab:main}). Equivalently, the served distribution lies $31.8$ and
+$23.7$ bits of KL divergence from the model's own. The distribution used for
+generation there is a renormalisation of that remainder. Retained mass rises as
+the schema loosens, to $8.7\times10^{-4}$ and $5.3\times10^{-3}$ at
+$t_{\text{open}}$ and to $0.20$ and $0.33$ at $t^{*}$, spanning roughly nine
+orders of magnitude within one generation.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Landmark & $|A_t|$ & $R_t$ & $D_{\mathrm{KL}}$ & $H_{\text{pre}}$ & $H_{\text{post}}$ & $P_{\text{refuse}}$ \\
+\midrule
+\multicolumn{7}{l}{\emph{Qwen2.5-7B}} \\
+$t_0$             & 5  & $2.7$e$-$10 & 31.8 & 0.07 & 1.26 & 0.769 \\
+$t_{\text{open}}$ & 4  & $8.7$e$-$04 & 10.2 & 2.92 & 0.88 & 0.283 \\
+$t^{*}$           & 90 & $0.202$     & 2.31 & 4.39 & 2.29 & 0.029 \\
+\midrule
+\multicolumn{7}{l}{\emph{Llama-3.1-8B}} \\
+$t_0$             & 5  & $7.2$e$-$08 & 23.7 & 0.21 & 0.79 & 0.830 \\
+$t_{\text{open}}$ & 4  & $5.3$e$-$03 & 7.56 & 6.24 & 1.01 & 0.238 \\
+$t^{*}$           & 90 & $0.333$     & 1.59 & 6.22 & 2.84 & 0.024 \\
+\bottomrule
+\end{tabular}
+\caption{Harmful prompts, means over 50 ($n\!=\!47$ to $50$ per cell).
+$D_{\mathrm{KL}}$ is $D_{\mathrm{KL}}(P_{\text{mask}}\|P_{\text{free}})$ from
+Eq.~\ref{eq:kl}. All in bits except $R_t$ and $P_{\text{refuse}}$. $|A_t|$ bounds
+$H_{\text{post}}$ above by $\log_2|A_t|$. Benign arms and intervals in
+Appendix~\ref{app:extra}.}
+\label{tab:main}
+\end{table}
+
+\paragraph{Entropy before and after masking (RQ2).}
+At $t_0$ the model's own distribution is close to degenerate, $0.07$ bits for
+Qwen and $0.21$ for Llama, against $0.76$ and $0.93$ on Alpaca prompts. The
+renormalised distribution at the same position carries $1.26$ and $0.79$ bits,
+larger rather than smaller by factors of roughly eighteen and four.
+Eq.~\ref{eq:decomp} accounts for this. The mask removes the token the model most
+prefers, and those remaining are ones among which it holds no marked preference,
+so the admitted set presents as indecision whether or not the model was
+undecided. The direction of the harmful and benign entropy difference is also
+position dependent (Figure~\ref{fig:landmarks}). At $t_0$ harmful prompts yield
+\emph{lower} entropy than benign ones, AUROC $0.158$ $[0.08, 0.25]$ for Qwen and
+$0.175$ $[0.10, 0.26]$ for Llama, and by $t^{*}$ the ordering has reversed, at
+$0.915$ and $0.718$. \citet{steindl-etal-2024-linguistic} report higher
+predictive entropy for prompts that evade safety mechanisms, measured at the
+sequence level over sampled responses and contrasting prompt variants, so it is
+not directly comparable. The two observations are nonetheless a reason for care,
+since token-level entropy at the first position and sequence-level entropy over a
+response need not agree in sign.
+
+\begin{figure*}[t]
+\centering
+\framebox[0.95\textwidth]{\rule{0pt}{4.6cm}\textsc{[Figure 2 placeholder]}}
+\caption{$P_{\text{refuse}}$ (left) and $H_{\text{pre}}$ (right) at the three
+landmarks, one row per model, harmful against both benign controls, with one
+standard error. The entropy panels cross between $t_0$ and $t^{*}$.}
+\label{fig:landmarks}
+\end{figure*}
+
+\paragraph{Persistence of the refusal signal (RQ3).}
+At $t_0$ the unconstrained distribution separates HarmBench from XSTest safe
+prompts at AUROC $0.827$ $[0.74, 0.90]$, and from Alpaca at $1.000$. The XSTest
+figure is the informative one, since those prompts do elicit a response
+($P_{\text{refuse}} = 0.372$ against $0.000$ for Alpaca) and the separation is
+therefore not attributable to surface vocabulary alone. $P_{\text{refuse}}$ then
+declines, from $0.769$ to $0.029$ for Qwen and $0.830$ to $0.024$ for Llama, a
+paired change of $+0.736$ $[0.664, 0.804]$ and $+0.799$ $[0.715, 0.874]$. Since
+the bitmask is applied after the forward pass it cannot alter $P_{\text{free}}$
+directly, so the decline is attributable to the model conditioning on tokens it
+was required to emit, consistent with accounts of forced affirmative prefixes as
+a safety failure mode \citep{wei-etal-2023-jailbroken}. Without a grammar both
+models open with a refusal on $88\%$ of these prompts.
+
+\section{Discussion and Conclusion}
+\label{sec:discussion}
+
+These measurements suggest that uncertainty reported under grammar-constrained
+decoding is best read as a joint property of the model and the constraint, and
+that how much weight to place on it depends on $R_t$. Where $R_t$ is close to
+one, $P_{\text{mask}}$ is close to a conditional of the model's own distribution
+and an entropy computed from it remains interpretable. Where $R_t$ is of order
+$10^{-10}$, it is not clear what such an estimate is an estimate of.
+
+Eq.~\ref{eq:decomp} also reconciles our observations with the expectation that
+constraints reduce uncertainty by restricting the candidate set. Both directions
+are available, and averaged over positions most masking trims the tail and
+lowers entropy. The positions where the opposite occurs are those where the
+model held a strong preference, which for questions about model behaviour are
+the positions of interest.
+
+A modest suggestion follows. Under constrained decoding, uncertainty is more
+informative when reported with respect to $P_{\text{free}}$, or at least
+accompanied by $R_t$, which is available wherever the mask is and costs nothing
+to record. This is not a new estimator but a statement about which distribution
+an existing one should be applied to, and it has a concrete consequence for
+serving stacks, since implementations that apply the mask inside a fused
+sampling kernel discard $P_{\text{free}}$ before anything can observe it. Our use
+of refusal is a probe rather than a subject, and the mechanism should apply
+wherever a model holds a sharp preference the schema forbids.
+
+\section*{Limitations}
+
+Our study covers one grammar family, one harmful benchmark, fifty prompts per
+condition, and two open-weight models of comparable size. Whether the effect
+holds for other schema types, larger models, or closed-weight systems is open.
+Closed-weight systems cannot be examined this way at all, since the method
+requires logits before the constraint is applied, a restriction shared by
+probabilistic uncertainty measurement generally
+\citep{steindl-etal-2024-linguistic}.
+
+Landmark dropout affects the deeper comparisons. The middle landmark is located
+by parsing the realised sequence and is lost when the tokeniser merges the
+value-opening quote with what follows. It is recovered for $47$ to $50$ of $50$
+harmful prompts but only $36$ of $50$ XSTest prompts, and the lost XSTest
+prompts have systematically higher $P_{\text{refuse}}$ at $t_0$
+(Appendix~\ref{app:dropout}), so the XSTest AUROC values at $t_{\text{open}}$
+and $t^{*}$ should be read as optimistic. The $t_0$ figures have no dropout.
+
+Inference is in \texttt{bfloat16}, so retained mass at $t_0$ should be taken as
+an order-of-magnitude estimate rather than to three significant figures.
+
+$P_{\text{refuse}}$ depends on a fixed phrase set. Its coverage on unconstrained
+generations is complete for both models, but whether a model's refusal
+vocabulary shifts inside a structured context is not testable from our
+artefacts, since the grammar prevents a refusal from being emitted at all. The
+retained mass is free of this dependence and shows the same pattern.
+
+Finally, a control schema replacing the semantically loaded key \texttt{step1}
+with a neutral one recovered part of the refusal mass on one model but not the
+other (Appendix~\ref{app:extra}), so we draw no conclusion about which component
+of the forced prefix is responsible.
+
+\section*{Ethics Statement}
+
+This work uses harmful prompts from a public red-teaming benchmark and a
+published structured-output attack in order to create a setting in which a
+model's preference is unambiguous. We introduce no new attack and report no
+attack success rates. Generated completions were inspected only on screen during
+development and are not persisted, and released artefacts contain token
+identifiers and distributional statistics rather than decoded harmful text. We
+regard the finding that a safety-relevant signal is discarded by a standard
+decoding path as defensively useful, since it identifies a place where existing
+information could be retained rather than a new way to remove it.
+
+\bibliography{custom}
+
+\appendix
+
+\section{Refusal phrase set}
+\label{app:refusal}
+
+[The fourteen phrases and their tokenisations, the version hash used for these
+runs, and the prefix-free reduction.]
+
+\section{Landmark dropout}
+\label{app:dropout}
+
+[Per-condition counts, and the comparison of $t_0$ $P_{\text{refuse}}$ between
+prompts whose middle landmark was and was not recovered.]
+
+\section{Additional results}
+\label{app:extra}
+
+[Table~\ref{tab:main} extended with benign arms and both benign sources, AUROC
+with intervals at all landmarks, per-position curves with the
+syntactic-availability caveat, the neutral-key control, and the restricted
+analysis over prompts refused under free decoding.]
+
+\end{document}
