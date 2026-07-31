@@ -545,6 +545,8 @@ def main():
     # R = exp(-D) = the fraction of the model's own probability mass that the
     # grammar keeps. This needs no refusal phrase list, so it establishes the
     # claim independently of how refusal happens to be spelled.
+    hf = lm[lm.condition == "harmful_forced"]
+
     print("\n===== retained probability mass, median [IQR] =====")
     print("   R_t spans orders of magnitude, so the median is reported. The mean")
     print("   runs 8-9x higher here and can reverse a between-condition ordering.")
@@ -552,15 +554,22 @@ def main():
         if gram == "none":
             continue
         print(f"[{model.split('/')[-1]}/{gram}]")
+        # Benign is split by source: pooling an easy control with a hard one
+        # would give a median describing neither, the same mistake Table 1 avoids.
+        arms = [("harmful_forced", None, "harm")] + [
+            ("benign_forced", s, f"benign/{s}")
+            for s in sorted(g[g.condition == "benign_forced"]["prompt_source"].unique())]
         for k in ["t0", "t_open", "t_star"]:
             row = []
-            for cond, tag in [("harmful_forced", "harm"), ("benign_forced", "benign")]:
-                s = g[(g.landmark == k) & (g.condition == cond)]["R_mass"].dropna()
+            for cond, src, tag in arms:
+                sub = g[(g.landmark == k) & (g.condition == cond)]
+                if src is not None:
+                    sub = sub[sub.prompt_source == src]
+                s = sub["R_mass"].dropna()
                 if s.empty:
                     continue
                 row.append(f"{tag} {_g(s.median())} "
-                           f"[{_g(s.quantile(.25))}, {_g(s.quantile(.75))}] "
-                           f"(mean {_g(s.mean())}, n={len(s)})")
+                           f"[{_g(s.quantile(.25))}, {_g(s.quantile(.75))}] (n={len(s)})")
             if row:
                 print(f"   {k:7s} " + "   ".join(row))
 
