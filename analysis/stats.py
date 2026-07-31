@@ -28,6 +28,25 @@ def bootstrap_ci(x, *, n_boot=2000, alpha=0.05, seed=0):
     return float(x.mean()), float(lo), float(hi)
 
 
+def bootstrap_ci_median(x, *, n_boot=2000, alpha=0.05, seed=0):
+    """Percentile bootstrap CI for the MEDIAN.
+
+    Separate from bootstrap_ci rather than a flag on it, so no existing caller
+    can change statistic by accident. Needed because retained mass spans ten
+    orders of magnitude: its mean sits 8-9x above its median and is set by a
+    handful of prompts, which is how a between-condition comparison on it got
+    reversed once already.
+    """
+    x = np.asarray(x, float)
+    x = x[~np.isnan(x)]
+    if len(x) == 0:
+        return float("nan"), float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    meds = np.median(x[rng.integers(0, len(x), size=(n_boot, len(x)))], axis=1)
+    lo, hi = np.percentile(meds, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float(np.median(x)), float(lo), float(hi)
+
+
 def auroc(pos_scores, neg_scores):
     """AUROC that `pos_scores` rank above `neg_scores` (Mann-Whitney U)."""
     pos = np.asarray(pos_scores, float)

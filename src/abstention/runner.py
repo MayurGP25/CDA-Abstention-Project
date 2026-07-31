@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from . import data, grammars, refusal_score, refusal_set
+from . import data, grammars, prompting, refusal_score, refusal_set
 from .model_loader import load
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,6 +101,17 @@ def sr_window(exp_cfg) -> int:
     return int(exp_cfg.get("refusal_score", {}).get("window_after_tstar", 12))
 
 
+def format_instruction(exp_cfg) -> str:
+    """How much the prompt tells the model about the format (see prompting.py).
+    Validated here rather than at first use, so a typo in the YAML or on the CLI
+    fails before the model is loaded instead of 40 GB later."""
+    lvl = str(exp_cfg.get("format_instruction", "none"))
+    if lvl not in prompting.LEVELS:
+        raise ValueError(
+            f"format_instruction '{lvl}' not in {prompting.LEVELS}")
+    return lvl
+
+
 def anchor(exp_cfg) -> str:
     """Literal after which the grammar pins the imperative verb. Config-driven so
     it tracks the grammar: `affirmative_prefix` would need a different anchor."""
@@ -120,8 +131,18 @@ def run_fingerprint(lm, exp_cfg, models_cfg, schema, prompt_ids) -> dict:
     like an incompatible run. Anything that WOULD change the numbers for a given
     prompt (model, grammar, token budgets, anchor, stride, refusal set, seed) is
     still in the digest. The id list is recorded alongside it for provenance.
+
+    BACKWARD COMPATIBILITY, deliberate. `format_instruction` enters the payload
+    ONLY when it is not "none". Adding a key unconditionally would change the
+    digest of every run already on the remote server -- including the finished
+    depth runs behind Table 1 -- and check_fingerprint compares digests exactly,
+    so those runs would refuse to resume and their shards would have to be
+    thrown away. Omitting the default keeps the "none" digest byte-identical to
+    what those manifests already hold, while every prompted arm still gets a
+    distinct digest and therefore cannot be merged into them.
     """
     g = exp_cfg["grammar"]
+    fmt = format_instruction(exp_cfg)
     payload = dict(
         model_id=lm.model_id,
         grammar_name=g["name"],
@@ -137,6 +158,12 @@ def run_fingerprint(lm, exp_cfg, models_cfg, schema, prompt_ids) -> dict:
         benign_source=exp_cfg.get("benign_source", "alpaca"),
         seed=exp_cfg["seed"],
     )
+    if fmt != "none":
+        payload["format_instruction"] = fmt
+        # The rendered system turn, not just its label: at level `schema` the
+        # text embeds the serialised schema, so two runs could share the label
+        # and differ in what the model actually read.
+        payload["system_prompt"] = prompting.system_prompt(fmt, schema)
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     # prompt_ids is provenance only -- recorded, not gated (see docstring).

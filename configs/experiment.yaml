@@ -20,6 +20,15 @@ max_new_tokens: 32
 free_max_new_tokens: 8   # free arm only has to reveal whether it opens with a refusal
 refusal_set: large       # small | large  (flip for the R-sensitivity ablation)
 
+# How much the PROMPT anticipates the grammar (src/abstention/prompting.py):
+#   none    | bare user turn, grammar unannounced          (paper's main runs)
+#   neutral | a system turn with no format content         (control for terse)
+#   terse   | Reddy et al. (2026) App. H JSON instruction
+#   schema  | terse + the literal serialised schema
+# Left at `none` so the existing runs' fingerprints are unchanged; the sweep is
+# driven from the CLI (--format-instruction), never by editing this line.
+format_instruction: none
+
 # Anchor = the literal after which the grammar pins an imperative verb, i.e. the
 # position where refusal openers are actually forbidden. NO TRAILING SPACE: BPE
 # glues the space onto the next word, so the running decode never passes through

@@ -84,10 +84,24 @@ def main():
                          "anchor (neutral_scaffold) -- t_star then reports -1 and "
                          "paper.py simply omits that landmark.")
     ap.add_argument("--max-new-tokens", type=int, default=None)
+    ap.add_argument("--format-instruction", default=None,
+                    choices=["none", "neutral", "terse", "schema"],
+                    help="how much the PROMPT anticipates the grammar (see "
+                         "src/abstention/prompting.py). Default none = the "
+                         "grammar arrives unannounced. Pair with "
+                         "--max-new-tokens 1 --exp fmt for the cheap t0-only "
+                         "sweep; that needs one forward pass per prompt.")
     args = ap.parse_args()
 
-    run_dir = runner.results_dir(args.exp) / f"{args.model}__{args.bench}"
-    out = run_dir / f"{args.model}__{args.bench}.parquet"
+    # The format level goes in the DIRECTORY NAME, not just the fingerprint.
+    # Without it the four levels of a sweep all target one run dir and every
+    # level after the first dies on a fingerprint mismatch -- correct, but
+    # useless. Omitted at "none" so existing run dirs keep their paths.
+    stem = f"{args.model}__{args.bench}"
+    if args.format_instruction and args.format_instruction != "none":
+        stem += f"__fmt-{args.format_instruction}"
+    run_dir = runner.results_dir(args.exp) / stem
+    out = run_dir / f"{stem}.parquet"
 
     if args.merge_only:
         shards.merge(run_dir, out)
@@ -96,7 +110,8 @@ def main():
     _install_signal_handlers()
     lm, grammar, schema, exp_cfg, models_cfg = runner.setup(args.model, overrides=dict(
         grammar_name=args.grammar, anchor=args.anchor,
-        max_new_tokens=args.max_new_tokens))
+        max_new_tokens=args.max_new_tokens,
+        format_instruction=args.format_instruction))
     if args.benign_source:                     # must precede the fingerprint
         exp_cfg["benign_source"] = args.benign_source
 
@@ -125,6 +140,7 @@ def main():
     T_free = exp_cfg.get("free_max_new_tokens", 8)
 
     g_name = exp_cfg["grammar"]["name"]
+    fmt = runner.format_instruction(exp_cfg)
     h_src, b_src = args.bench, exp_cfg.get("benign_source", "alpaca")
 
     # (condition, prompt, max_new_tokens, grammar, measure_sr, prompt_source)
@@ -158,6 +174,7 @@ def main():
                     refusal_prefix_ids=prefix_ids if measure_sr else None,
                     sr_stride=stride, anchor=anchor, sr_window=window,
                     grammar_name=g_name, prompt_source=psrc,
+                    format_instruction=fmt, schema=schema,
                 )
                 # Behavioural fact for the free arm. Store the BOOLEAN ONLY --
                 # never persist decoded generations (RESPONSIBLE_USE).
