@@ -196,6 +196,97 @@ def generate_forced(
 
 
 @torch.no_grad()
+def restoration_sweep(
+    lm: LoadedModel,
+    messages: list[dict],
+    refusal_ids: list[int],
+    compiled_grammar,
+    *,
+    positions: list[int],
+    refusal_prefix_ids: list[list[int]] | None = None,
+) -> list[dict]:
+    """All restore positions in ONE decode pass. Results identical to calling
+    restoration_probe() once per position, ~5x faster.
+
+    restoration_probe() re-decodes from scratch for every k, discarding the first
+    k tokens of work each time: sum(positions) steps instead of max(positions).
+    For positions [0,2,4,6,8,10,12,16] that is 58 steps per prompt rather than 16.
+
+    Identical because the escape test at position k depends only on the logits at
+    position k, and greedy grammar-constrained decoding yields the same prefix
+    whether or not we tested at an earlier position -- the test never consumes a
+    token, it only inspects the distribution.
+    """
+    model, tok, dev = lm.model, lm.tokenizer, lm.device
+    V = lm.full_vocab
+    R = torch.tensor(sorted(set(refusal_ids)), device=dev, dtype=torch.long)
+    R_set = set(refusal_ids)
+    eos = tok.eos_token_id
+    pad_id = tok.pad_token_id if tok.pad_token_id is not None else (eos or 0)
+    want = sorted(set(positions))
+
+    input_ids = encode_chat(tok, messages, dev)
+    matcher = xgr.GrammarMatcher(compiled_grammar)
+    bitmask = xgr.allocate_token_bitmask(1, V)
+
+    out = model(input_ids=input_ids, use_cache=True)
+    past = out.past_key_values
+    logits = out.logits[0, -1, :].float()
+
+    emitted: list[int] = []
+    results: dict[int, dict] = {}
+
+    for pos in range(max(want) + 1):
+        matcher.fill_next_token_bitmask(bitmask)
+        allowed = _bool_allowed(bitmask, V, dev)
+        p_free = torch.softmax(logits, dim=-1)
+
+        if pos in want:
+            allowed_r = allowed.clone()
+            allowed_r[R] = True
+            if eos is not None:
+                allowed_r[eos] = True
+            masked_r = torch.where(allowed_r, logits, torch.full_like(logits, float("-inf")))
+            argmax_id = int(torch.argmax(masked_r).item())
+            in_R, is_eos = argmax_id in R_set, (eos is not None and argmax_id == eos)
+            sr = float("nan")
+            if refusal_prefix_ids:
+                ctx = (torch.cat([input_ids[0],
+                                  torch.tensor(emitted, device=dev, dtype=torch.long)])
+                       if emitted else input_ids[0])
+                sr = sequence_refusal_logprob(model, ctx, refusal_prefix_ids, dev,
+                                              pad_id=pad_id)
+            results[pos] = dict(
+                restore_pos=pos, reached=True, escaped=bool(in_R or is_eos),
+                escaped_to="refusal" if in_R else ("eos" if is_eos else "none"),
+                recovered_mass=float(p_free[R].sum()
+                                     + (p_free[eos] if eos is not None else 0.0)),
+                mu_at_pos=float(p_free[R].sum()), sr_at_pos=sr)
+
+        masked = logits.clone().unsqueeze(0)
+        xgr.apply_token_bitmask_inplace(masked, bitmask.to(dev))
+        next_id = int(torch.argmax(masked.squeeze(0)).item())
+        emitted.append(next_id)
+        matcher.accept_token(next_id)
+        if matcher.is_terminated():
+            break
+        step = model(input_ids=torch.tensor([[next_id]], device=dev),
+                     past_key_values=past, use_cache=True)
+        past = step.past_key_values
+        logits = step.logits[0, -1, :].float()
+
+    # Positions never reached (generation terminated first) are marked
+    # reached=False so they are EXCLUDED from escape rates rather than counted as
+    # failures to escape, which would bias late positions downward.
+    for k in want:
+        results.setdefault(k, dict(
+            restore_pos=k, reached=False, escaped=False, escaped_to="none",
+            recovered_mass=float("nan"), mu_at_pos=float("nan"),
+            sr_at_pos=float("nan")))
+    return [results[k] for k in want]
+
+
+@torch.no_grad()
 def restoration_probe(
     lm: LoadedModel,
     messages: list[dict],

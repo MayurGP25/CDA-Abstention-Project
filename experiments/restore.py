@@ -32,7 +32,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from abstention import shards  # noqa: E402  (pandas only -- safe on a CPU box)
 
-# `runner` and `restoration_probe` pull in torch + xgrammar, so they are imported
+# `runner` and `restoration_sweep` pull in torch + xgrammar, so they are imported
 # inside main(). That keeps --summary-only usable on a machine with no GPU stack.
 
 _STOP = False
@@ -112,7 +112,7 @@ def main():
 
     _install_signal_handlers()
     from abstention import runner                       # noqa: PLC0415 (torch/xgrammar)
-    from abstention.decode_loop import restoration_probe  # noqa: PLC0415
+    from abstention.decode_loop import restoration_sweep  # noqa: PLC0415
 
     lm, grammar, schema, exp_cfg, models_cfg = runner.setup(args.model)
     harmful = runner.harmful_prompts(exp_cfg, args.bench)
@@ -137,46 +137,53 @@ def main():
     prefix_ids = runner.get_refusal_prefix_ids(lm)
     T = exp_cfg["max_new_tokens"]
 
-    units = [(p, k) for p in harmful for k in positions]
+    # Unit = one PROMPT (all positions in a single decode pass, ~5x cheaper than
+    # re-decoding per position). Shards stay per (prompt, k), so shards written by
+    # the old per-position loop remain valid and are skipped here.
     done = shards.completed(shard_dir)
-    todo = [u for u in units if shards.unit_key(f"k{u[1]}", u[0]["id"]) not in done]
-    print(f"[restore] {len(units)} units ({len(harmful)} prompts x {len(positions)} "
-          f"positions) | {len(done)} complete | {len(todo)} to run")
+    todo = [p for p in harmful
+            if not all(shards.unit_key(f"k{k}", p["id"]) in done for k in positions)]
+    print(f"[restore] {len(harmful)} prompts x {len(positions)} positions "
+          f"= {len(harmful) * len(positions)} probes | {len(done)} shards on disk "
+          f"| {len(todo)} prompts to run")
 
     failures = []
-    bar = tqdm(todo, desc="probes")
-    for p, k in bar:
+    bar = tqdm(todo, desc="prompts")
+    for p in bar:
         if _STOP:
             break
-        key = shards.unit_key(f"k{k}", p["id"])
-        bar.set_postfix_str(key[:38])
+        bar.set_postfix_str(str(p["id"])[:30])
         t0 = time.time()
         for attempt in (1, 2):
             try:
-                r = restoration_probe(
+                rs = restoration_sweep(
                     lm, [{"role": "user", "content": p["prompt"]}], refusal_ids,
-                    grammar, restore_pos=k, max_new_tokens=max(T, k + 2),
-                    refusal_prefix_ids=prefix_ids)
-                row = dict(model=lm.model_id, bench=args.bench, prompt_id=p["id"], **r)
-                shards.write_atomic_parquet(pd.DataFrame([row]), shard_dir / f"{key}.parquet")
+                    grammar, positions=positions, refusal_prefix_ids=prefix_ids)
+                for r in rs:
+                    key = shards.unit_key(f"k{r['restore_pos']}", p["id"])
+                    row = dict(model=lm.model_id, bench=args.bench,
+                               prompt_id=p["id"], **r)
+                    shards.write_atomic_parquet(pd.DataFrame([row]),
+                                                shard_dir / f"{key}.parquet")
                 shards.append_jsonl(progress, dict(
-                    unit=key, status="ok", escaped=r["escaped"],
-                    escaped_to=r["escaped_to"], reached=r["reached"],
+                    unit=str(p["id"]), status="ok", n_positions=len(rs),
+                    escaped=[r["escaped"] for r in rs],
                     secs=round(time.time() - t0, 2),
                     ts=time.strftime("%Y-%m-%dT%H:%M:%S")))
                 break
             except Exception as e:                              # noqa: BLE001
                 if attempt == 2:
-                    failures.append(key)
+                    failures.append(str(p["id"]))
                     shards.append_jsonl(progress, dict(
-                        unit=key, status="failed", error=repr(e)[:400],
+                        unit=str(p["id"]), status="failed", error=repr(e)[:400],
                         ts=time.strftime("%Y-%m-%dT%H:%M:%S")))
-                    print(f"\n[restore] FAILED {key}: {e!r}", flush=True)
+                    print(f"\n[restore] FAILED {p['id']}: {e!r}", flush=True)
     bar.close()
 
     shards.merge(run_dir, out)
-    print(f"[restore] complete {len(shards.completed(shard_dir))}/{len(units)}"
-          + (f" | {len(failures)} failed" if failures else ""))
+    print(f"[restore] complete {len(shards.completed(shard_dir))}"
+          f"/{len(harmful) * len(positions)} probes"
+          + (f" | {len(failures)} prompts failed" if failures else ""))
     if out.exists():
         summarise(out)
 
