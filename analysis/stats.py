@@ -39,6 +39,41 @@ def auroc(pos_scores, neg_scores):
     return float(u / (len(pos) * len(neg)))
 
 
+def auroc_ci(pos_scores, neg_scores, *, n_boot=2000, alpha=0.05, seed=0):
+    """Percentile bootstrap CI for AUROC. Resamples the two groups independently,
+    which is the right scheme here because harmful and benign are different
+    prompts, not paired observations."""
+    pos = np.asarray(pos_scores, float)
+    neg = np.asarray(neg_scores, float)
+    pos, neg = pos[~np.isnan(pos)], neg[~np.isnan(neg)]
+    if len(pos) < 2 or len(neg) < 2:
+        return float("nan"), float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    boots = np.empty(n_boot)
+    for b in range(n_boot):
+        p = pos[rng.integers(0, len(pos), len(pos))]
+        n = neg[rng.integers(0, len(neg), len(neg))]
+        boots[b] = auroc(p, n)
+    lo, hi = np.nanpercentile(boots, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float(auroc(pos, neg)), float(lo), float(hi)
+
+
+def paired_bootstrap_diff(a, b, *, n_boot=2000, alpha=0.05, seed=0):
+    """CI for mean(a) - mean(b) on PAIRED observations (same prompts at two
+    landmarks). Resamples prompt indices, preserving the pairing -- ignoring it
+    would inflate the interval."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    m = ~(np.isnan(a) | np.isnan(b))
+    a, b = a[m], b[m]
+    if len(a) < 2:
+        return float("nan"), float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(a), size=(n_boot, len(a)))
+    d = (a[idx] - b[idx]).mean(axis=1)
+    lo, hi = np.percentile(d, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float((a - b).mean()), float(lo), float(hi)
+
+
 def cohens_d_paired(a, b):
     a, b = np.asarray(a, float), np.asarray(b, float)
     d = a - b

@@ -116,6 +116,14 @@ def at_landmarks(df: pd.DataFrame) -> pd.DataFrame:
                 continue
             row = g.loc[pos]
             sr = float(row["sr"])
+            # Retained / escape mass, free from the stored D column:
+            #   D = -log Z_A  where Z_A = sum_{v in allowed} P_free(v)
+            # so R = exp(-D) is the fraction of the model's belief the grammar
+            # keeps, and E = 1 - R is what it discards. Both are LEXICON-FREE --
+            # they need no refusal phrase list at all, so they establish that
+            # belief left the allowed set without depending on how refusal is
+            # spelled. P_refuse then says *what* left.
+            R_mass = float(np.exp(-float(row["D"]))) if np.isfinite(row["D"]) else np.nan
             out.append(dict(
                 model=model, grammar=gram, condition=cond, prompt_source=src,
                 prompt_id=pid, landmark=name, pos=pos,
@@ -123,6 +131,8 @@ def at_landmarks(df: pd.DataFrame) -> pd.DataFrame:
                 H_pre=float(row["H_pre"]),
                 H_post=float(row["H_post"]),
                 n_allowed=int(row["n_allowed"]),
+                R_mass=R_mass,
+                E_mass=(1.0 - R_mass) if np.isfinite(R_mass) else np.nan,
             ))
     return pd.DataFrame(out)
 
@@ -150,15 +160,26 @@ def table1(lm: pd.DataFrame) -> pd.DataFrame:
                        benign_source=bsrc or "-", n_harmful=len(h), n_benign=len(b),
                        pos_median=float(h["pos"].median()),
                        n_allowed_median=float(h["n_allowed"].median()),
-                       H_post_harmful=float(h["H_post"].mean()))
+                       H_post_harmful=float(h["H_post"].mean()),
+                       R_mass_harmful=float(h["R_mass"].mean()),
+                       E_mass_harmful=float(h["E_mass"].mean()))
             for metric in ("P_refuse", "H_pre"):
                 hv, bv = h[metric].dropna(), b[metric].dropna()
                 rec[f"{metric}_harmful"] = float(hv.mean()) if len(hv) else np.nan
                 rec[f"{metric}_benign"] = float(bv.mean()) if len(bv) else np.nan
                 rec[f"{metric}_absdelta"] = abs(rec[f"{metric}_harmful"]
                                                 - rec[f"{metric}_benign"])
-                rec[f"{metric}_auroc"] = (stats.auroc(hv, bv)
-                                          if len(hv) and len(bv) else np.nan)
+                if len(hv) and len(bv):
+                    a, alo, ahi = stats.auroc_ci(hv, bv)
+                    rec[f"{metric}_auroc"] = a
+                    rec[f"{metric}_auroc_lo"], rec[f"{metric}_auroc_hi"] = alo, ahi
+                else:
+                    rec[f"{metric}_auroc"] = np.nan
+                    rec[f"{metric}_auroc_lo"] = rec[f"{metric}_auroc_hi"] = np.nan
+                # 95% bootstrap CI on the harmful-arm mean itself
+                if len(hv):
+                    _, lo, hi = stats.bootstrap_ci(hv.to_numpy(float))
+                    rec[f"{metric}_harmful_lo"], rec[f"{metric}_harmful_hi"] = lo, hi
             rows.append(rec)
     order = {"t0": 0, "t_open": 1, "t_star": 2}
     return (pd.DataFrame(rows)
@@ -177,20 +198,32 @@ def _auroc_cell(a: float) -> str:
     return f"{a:.3f}" + (" [INV]" if a < 0.5 else "")
 
 
+def _auroc_ci_cell(r, metric) -> str:
+    a = r[f"{metric}_auroc"]
+    lo, hi = r.get(f"{metric}_auroc_lo", np.nan), r.get(f"{metric}_auroc_hi", np.nan)
+    if not np.isfinite(a):
+        return "n/a"
+    s = f"{a:.3f}"
+    if np.isfinite(lo):
+        s += f" [{lo:.2f},{hi:.2f}]"
+    return s + (" [INV]" if a < 0.5 else "")
+
+
 def table1_markdown(t: pd.DataFrame) -> str:
     lines = ["| model | grammar | landmark | pos | benign src | n | P_refuse (harm) | "
-             "P_refuse (benign) | AUROC | H_pre (harm) | H_pre (benign) | AUROC | "
-             "n_allowed | H_post |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "P_refuse (benign) | AUROC [95% CI] | H_pre (harm) | H_pre (benign) | "
+             "AUROC [95% CI] | n_allowed | retained R | escape 1-R | H_post |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in t.iterrows():
         lines.append(
             f"| {r.model.split('/')[-1]} | {r.grammar} | {r.landmark} | "
             f"{r.pos_median:.0f} | {r.benign_source} | {r.n_harmful}/{r.n_benign} | "
             f"{r.P_refuse_harmful:.4f} | {r.P_refuse_benign:.4f} | "
-            f"{_auroc_cell(r.P_refuse_auroc)} | "
+            f"{_auroc_ci_cell(r, 'P_refuse')} | "
             f"{r.H_pre_harmful:.2f} | {r.H_pre_benign:.2f} | "
-            f"{_auroc_cell(r.H_pre_auroc)} | "
-            f"{r.n_allowed_median:.0f} | {r.H_post_harmful:.2f} |")
+            f"{_auroc_ci_cell(r, 'H_pre')} | "
+            f"{r.n_allowed_median:.0f} | {r.R_mass_harmful:.4f} | "
+            f"{r.E_mass_harmful:.4f} | {r.H_post_harmful:.2f} |")
     lines.append("")
     lines.append("AUROC = P(harmful ranks above benign). [INV] marks a value below 0.5, "
                  "i.e. the harmful arm ranks *lower* -- a signed result, not an error. "
@@ -485,10 +518,29 @@ def main():
             print(f"[{model}] Under free decoding the model opens with a refusal on "
                   f"{100 * s.mean():.0f}% of harmful prompts (n={len(s)}).")
 
-    # ---- the collapse decomposition, printed as a decision aid ------------- #
-    print("\n===== collapse decomposition (harmful arm) =====")
+    # ---- retained mass: the lexicon-free headline -------------------------- #
+    # R = exp(-D) = the fraction of the model's own probability mass that the
+    # grammar keeps. This needs no refusal phrase list, so it establishes the
+    # claim independently of how refusal happens to be spelled.
+    print("\n===== retained vs escaped probability mass (harmful arm) =====")
     hf = lm[lm.condition == "harmful_forced"]
     for (model, gram), g in hf.groupby(["model", "grammar"]):
+        r = g.groupby("landmark")["R_mass"].mean()
+        print(f"[{model.split('/')[-1]}/{gram}]")
+        for k in ["t0", "t_open", "t_star"]:
+            if k in r and np.isfinite(r[k]):
+                print(f"   {k:7s} retained {r[k]:.4f}  ->  the served distribution is a "
+                      f"renormalisation of {100*r[k]:.2f}% of the model's belief")
+
+    # ---- the collapse decomposition, printed as a decision aid ------------- #
+    print("\n===== collapse decomposition (harmful arm) =====")
+    for (model, gram), g in hf.groupby(["model", "grammar"]):
+        # paired CI on the t0 -> t_star drop (same prompts at both landmarks)
+        w = g.pivot_table(index="prompt_id", columns="landmark", values="P_refuse")
+        if {"t0", "t_star"} <= set(w.columns):
+            d, lo, hi = stats.paired_bootstrap_diff(w["t0"], w["t_star"])
+            print(f"[{model.split('/')[-1]}/{gram}] paired drop t0-t*: "
+                  f"{d:+.4f} [95% CI {lo:+.4f}, {hi:+.4f}]  (n={w[['t0','t_star']].dropna().shape[0]})")
         p = g.groupby("landmark")["P_refuse"].mean()
         t0, topen, tstar = p.get("t0"), p.get("t_open"), p.get("t_star")
         tag = f"{model.split('/')[-1]}/{gram}"
@@ -525,6 +577,29 @@ def main():
         else:
             print("  -> the drop is driven by the FORMAT SHIFT itself; the key's wording "
                   "is not what does it.")
+
+    # ---- landmark dropout audit: is t_open missing at random? -------------- #
+    # t_open is located by parsing the realised token sequence, so it is lost
+    # whenever the tokenizer merges the value-opening quote with what follows.
+    # If that merge correlates with the outcome, the t_open sample is
+    # outcome-conditioned and the landmark comparison is selection-biased.
+    print("\n===== t_open dropout audit =====")
+    for (model, gram, cond), g in lm.groupby(["model", "grammar", "condition"]):
+        if gram == "none":
+            continue
+        have = set(g[g.landmark == "t_open"]["prompt_id"])
+        t0 = g[g.landmark == "t0"].set_index("prompt_id")["P_refuse"]
+        if t0.empty or not len(have) or len(have) == len(t0):
+            continue
+        kept, lost = t0[t0.index.isin(have)], t0[~t0.index.isin(have)]
+        tag = f"{model.split('/')[-1]}/{gram}/{cond}"
+        print(f"  {tag}: t_open found {len(have)}/{len(t0)} | "
+              f"t0 P_refuse  kept={kept.mean():.4f} (n={len(kept)})  "
+              f"lost={lost.mean():.4f} (n={len(lost)})")
+        if len(lost) >= 2 and len(kept) >= 2:
+            a = stats.auroc(kept.to_numpy(float), lost.to_numpy(float))
+            flag = "  <-- CHECK: dropout looks outcome-related" if abs(a - .5) > .2 else ""
+            print(f"      AUROC(kept > lost) = {a:.3f}  (0.5 = missing at random){flag}")
 
     # ---- robustness: restrict to prompts the model actually refuses freely -- #
     if "free_refused" in df.columns:
