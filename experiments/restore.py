@@ -81,6 +81,57 @@ def summarise(parquet: Path):
               "stays enforceable across this window.")
 
 
+def figure(parquets: list[Path], out: Path):
+    """Escape rate vs restore position, one line per model.
+
+    The deliverable of this experiment in one panel: where the deadline is.
+    Overlays P_refuse on a second axis so the escape rate can be read directly
+    against the preference collapse -- the claim is that they fall together, i.e.
+    the model declines the exit because it no longer wants it, not because the
+    exit is unavailable.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    frames = []
+    for p in parquets:
+        try:
+            frames.append(pd.read_parquet(p))
+        except Exception:                                    # noqa: BLE001
+            continue
+    if not frames:
+        return
+    df = pd.concat(frames, ignore_index=True)
+    df = df[df["reached"].astype(bool)]
+    if df.empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(5.6, 3.8))
+    ax2 = ax.twinx()
+    for i, (model, g) in enumerate(df.groupby("model")):
+        rate = g.groupby("restore_pos")["escaped"].mean()
+        n = g.groupby("restore_pos")["escaped"].count()
+        se = (rate * (1 - rate) / n) ** 0.5                  # binomial SE
+        c = f"C{i}"
+        ax.errorbar(rate.index, 100 * rate.values, yerr=100 * se.values, marker="o",
+                    capsize=3, lw=1.8, color=c, label=model.split("/")[-1])
+        pr = g.groupby("restore_pos")["sr_at_pos"].apply(lambda s: np.exp(s).mean())
+        ax2.plot(pr.index, pr.values, ":", lw=1.2, color=c, alpha=.65)
+    ax.axhline(50, ls="--", lw=.8, color="grey")
+    ax.set_xlabel("position k at which refusal tokens are re-admitted")
+    ax.set_ylabel("escape rate (%)")
+    ax2.set_ylabel("P(refusal opener)  [dotted]", fontsize=8)
+    ax2.set_yscale("log")
+    ax.set_title("Abstention is restorable only within a window", fontsize=10)
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(alpha=.25)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+    print(f"[restore] figure -> {out}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -92,6 +143,9 @@ def main():
                     help="re-print the summary from existing shards; no GPU needed")
     ap.add_argument("--positions", type=int, nargs="+", default=None,
                     help="override restoration_positions from experiment.yaml")
+    ap.add_argument("--figure", default=None,
+                    help="write the escape-rate figure here; with --summary-only "
+                         "it pools every model under results/restore/")
     args = ap.parse_args()
 
     # Computed directly rather than via runner.results_dir(), because `runner`
@@ -108,6 +162,9 @@ def main():
             summarise(out)
         else:
             print(f"[restore] nothing collected yet for {run_dir.name}")
+        if args.figure:
+            # Pool every model so the figure shows replication, not one run.
+            figure(sorted(run_dir.parent.glob("*/*.parquet")), Path(args.figure))
         return
 
     _install_signal_handlers()
@@ -186,6 +243,9 @@ def main():
           + (f" | {len(failures)} prompts failed" if failures else ""))
     if out.exists():
         summarise(out)
+        figure(sorted(run_dir.parent.glob("*/*.parquet")),
+               Path(args.figure) if args.figure
+               else run_dir.parent / "fig2_restoration.png")
 
 
 if __name__ == "__main__":

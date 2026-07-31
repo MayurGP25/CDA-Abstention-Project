@@ -44,6 +44,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analysis import stats  # noqa: E402
 
 P_FLOOR = 1e-8          # log-axis floor; P_refuse is exactly 0.0 for many benign rows
+# Display-only floor for log panels. The alpaca benign arm reads exactly 0.0, so
+# without this the axis spans to 1e-8 and the readable range (1e-2 .. 1) is
+# squeezed into a sliver. Points ON the floor mean "at or below 1e-4", which is
+# stated in the axis label rather than silently implied.
+DISPLAY_FLOOR = 1e-4
 ARMS = ["harmful_forced", "benign_forced"]
 
 
@@ -162,6 +167,137 @@ def table1_markdown(t: pd.DataFrame) -> str:
 # --------------------------------------------------------------------------- #
 # Figure 1
 # --------------------------------------------------------------------------- #
+def figure1_grid(lm: pd.DataFrame, out: Path, grammar: str = "forced_steps"):
+    """THE figure: rows = models, cols = the two metrics, x = the three landmarks.
+
+    One figure for the whole result. Per-model figures waste a page in a 4-page
+    paper, and putting both models on shared axes makes the replication visible
+    at a glance rather than requiring the reader to flip between panels.
+    """
+    g = lm[lm.grammar == grammar]
+    models = sorted(g.model.unique())
+    if not models:
+        return
+    order = ["t0", "t_open", "t_star"]
+    x = np.arange(len(order))
+
+    # One series per (condition, benign source). Pooling an easy control (alpaca)
+    # with a hard one (xstest) would draw a benign line that describes neither --
+    # the same mistake Table 1 avoids by emitting a row per source.
+    series = [("harmful_forced", None, "harmful", "tab:red", "o", "-")]
+    for src in sorted(g[g.condition == "benign_forced"]["prompt_source"].unique()):
+        colour = "tab:blue" if src.startswith("alpaca") else "tab:purple"
+        series.append(("benign_forced", src, f"benign ({src})", colour, "s", "--"))
+
+    fig, axes = plt.subplots(len(models), 2, figsize=(9.5, 3.6 * len(models)),
+                             squeeze=False)
+    for r, model in enumerate(models):
+        gm = g[g.model == model]
+        for c, (col, ylab, logy) in enumerate(
+                [("P_refuse", f"P(refusal opener)   [floor {DISPLAY_FLOOR:g}]", True),
+                 ("H_pre", "pre-mask entropy (bits)", False)]):
+            ax = axes[r][c]
+            for cond, src, lab, colour, mk, ls in series:
+                sub = gm[gm.condition == cond]
+                if src is not None:
+                    sub = sub[sub.prompt_source == src]
+                if sub.empty:
+                    continue
+                m = [sub[sub.landmark == k][col].mean() for k in order]
+                e = [sub[sub.landmark == k][col].sem() for k in order]
+                if logy:      # keep an all-zero benign arm from dragging the log
+                    m = [max(v, DISPLAY_FLOOR) for v in m]   # axis down to 1e-8
+                ax.errorbar(x, m, yerr=e, marker=mk, color=colour, ls=ls,
+                            capsize=3, lw=1.6, label=lab)
+            if logy:
+                ax.set_yscale("log")
+                ax.set_ylim(bottom=DISPLAY_FLOOR / 2)
+            ax.set_xticks(x)
+            ax.set_xticklabels(["$t_0$", "$t_{open}$", "$t^*$"] if r < len(models) - 1
+                               else ["$t_0$\n(pre-constraint)",
+                                     "$t_{open}$\n(in JSON,\nsentence start)",
+                                     "$t^*$\n(after 'Step 1:')"], fontsize=8)
+            ax.set_ylabel(ylab, fontsize=9)
+            ax.grid(alpha=.25, axis="y")
+            if r == 0 and ax.get_legend_handles_labels()[0]:
+                ax.legend(fontsize=8)
+        axes[r][0].annotate(model.split("/")[-1], xy=(-0.22, 0.5),
+                            xycoords="axes fraction", rotation=90,
+                            va="center", ha="center", fontsize=10, weight="bold")
+    fig.tight_layout()
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def figure_neutral(lm: pd.DataFrame, out: Path):
+    """P_refuse at t_open under the two keys. Answers: format, or semantics?"""
+    g = lm[(lm.condition == "harmful_forced") & (lm.landmark == "t_open")]
+    models = sorted(m for m in g.model.unique()
+                    if {"forced_steps", "neutral_scaffold"} <= set(
+                        g[g.model == m].grammar.unique()))
+    if not models:
+        return
+    fig, ax = plt.subplots(figsize=(1.6 + 1.5 * len(models), 3.8))
+    w, x = 0.34, np.arange(len(models))
+    for i, (gram, lab, col) in enumerate([
+            ("neutral_scaffold", '"field1" (neutral)', "tab:green"),
+            ("forced_steps", '"step1" (commits)', "tab:red")]):
+        m = [g[(g.model == mo) & (g.grammar == gram)]["P_refuse"].mean() for mo in models]
+        e = [g[(g.model == mo) & (g.grammar == gram)]["P_refuse"].sem() for mo in models]
+        ax.bar(x + (i - 0.5) * w, m, w, yerr=e, capsize=3, label=lab, color=col, alpha=.85)
+    ax.set_xticks(x)
+    ax.set_xticklabels([m.split("/")[-1] for m in models], fontsize=8)
+    ax.set_ylabel("P(refusal opener) at $t_{open}$")
+    ax.set_title("Same position, same JSON depth,\nonly the key's wording differs",
+                 fontsize=9)
+    ax.legend(fontsize=8)
+    ax.grid(alpha=.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
+def figure_coercion_cost(df: pd.DataFrame, lm: pd.DataFrame, out: Path):
+    """Appendix: s = -log P_free(forced token) at each landmark.
+
+    'How surprised was the model by what it was forced to say.' A second,
+    independent line of evidence for the same mechanism, read from the
+    constraint's side rather than the model's: if s falls across the landmarks,
+    the model has stopped being surprised by the text it is made to produce.
+
+    Uses `s` rather than `D = -log Z_A` because D confounds coercion with how
+    many tokens the grammar happens to allow (n_allowed runs 1 -> 90 here),
+    whereas s is the surprisal of one specific emitted token.
+    """
+    if "s" not in df.columns:
+        return
+    key = ["model", "grammar", "condition", "prompt_id", "pos"]
+    m = lm.merge(df[key + ["s"]], on=[c for c in key if c != "pos"] + ["pos"],
+                 how="left")
+    g = m[(m.condition == "harmful_forced") & (m.grammar == "forced_steps")]
+    if g.empty or g["s"].isna().all():
+        return
+    order = ["t0", "t_open", "t_star"]
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(5, 3.6))
+    for model in sorted(g.model.unique()):
+        gm = g[g.model == model]
+        mu = [gm[gm.landmark == k]["s"].mean() for k in order]
+        se = [gm[gm.landmark == k]["s"].sem() for k in order]
+        ax.errorbar(x, mu, yerr=se, marker="o", capsize=3, lw=1.6,
+                    label=model.split("/")[-1])
+    ax.set_xticks(x)
+    ax.set_xticklabels(["$t_0$", "$t_{open}$", "$t^*$"])
+    ax.set_ylabel("surprisal of the forced token (nats)")
+    ax.set_title("Coercion cost: how surprised the model is\nby what it must write",
+                 fontsize=9)
+    ax.legend(fontsize=8)
+    ax.grid(alpha=.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
 def figure1(lm: pd.DataFrame, out: Path, model: str, grammar: str):
     """THE figure: the two metrics at the three landmarks, per-prompt mean +/- 1 SEM.
 
@@ -276,6 +412,11 @@ def main():
     (outdir / "table1.md").write_text(md, encoding="utf-8")
     print("\n===== Table 1 =====\n" + md)
 
+    # Fig 1: everything on one figure (rows = models). Per-model versions are
+    # still written for slides, but the grid is what goes in the paper.
+    figure1_grid(lm, outdir / "fig1_grid.png")
+    figure_neutral(lm, outdir / "fig3_neutral_scaffold.png")
+    figure_coercion_cost(df, lm, outdir / "figA_coercion_cost.png")
     for (model, gram), _ in lm.groupby(["model", "grammar"]):
         tag = f"{_slug(model)}__{_slug(gram)}"
         figure1(lm, outdir / f"fig1_{tag}.png", model, gram)
