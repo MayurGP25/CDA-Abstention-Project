@@ -154,9 +154,10 @@ D_{\mathrm{KL}}\!\left(P_{\text{mask}} \,\|\, P_{\text{free}}\right) \;=\; -\log
 so retained mass and the divergence of the served distribution from the model's
 are the same measurement in different units. We report both, the divergence
 because it is the standard way to express the gap between two predictive
-distributions and the retained mass because it is easier to read. The reverse
-direction is not available, since $P_{\text{mask}}$ assigns zero mass to tokens
-$P_{\text{free}}$ does not.
+distributions and the retained mass because it is easier to read. Only this
+direction is finite, since $P_{\text{mask}}$ assigns zero mass where
+$P_{\text{free}}$ does not, which is also why $P_{\text{free}}$ cannot be
+recovered from the served distribution.
 
 We compare $H_{\text{pre}}$, the entropy of $P_{\text{free}}$ over the full
 vocabulary, with $H_{\text{post}}$, the entropy of $P_{\text{mask}}$, both in
@@ -224,8 +225,8 @@ tests.
 At $t_0$ the grammar admits five tokens, the JSON opening brace and whitespace
 variants, holding $2.7\times10^{-10}$ of Qwen's predictive mass ($95\%$ CI
 $[6.4\times10^{-11}, 5.6\times10^{-10}]$) and $7.2\times10^{-8}$ of Llama's
-(Table~\ref{tab:main}). Equivalently, the served distribution lies $31.8$ and
-$23.7$ bits of KL divergence from the model's own. The distribution used for
+(Table~\ref{tab:main}). Equivalently, the served distribution lies $35.0$ and
+$27.2$ bits of KL divergence from the model's own. The distribution used for
 generation there is a renormalisation of that remainder. Retained mass rises as
 the schema loosens, to $8.7\times10^{-4}$ and $5.3\times10^{-3}$ at
 $t_{\text{open}}$ and to $0.20$ and $0.33$ at $t^{*}$, spanning roughly nine
@@ -240,21 +241,23 @@ orders of magnitude within one generation.
 Landmark & $|A_t|$ & $R_t$ & $D_{\mathrm{KL}}$ & $H_{\text{pre}}$ & $H_{\text{post}}$ & $P_{\text{refuse}}$ \\
 \midrule
 \multicolumn{7}{l}{\emph{Qwen2.5-7B}} \\
-$t_0$             & 5  & $2.7$e$-$10 & 31.8 & 0.07 & 1.26 & 0.769 \\
-$t_{\text{open}}$ & 4  & $8.7$e$-$04 & 10.2 & 2.92 & 0.88 & 0.283 \\
-$t^{*}$           & 90 & $0.202$     & 2.31 & 4.39 & 2.29 & 0.029 \\
+$t_0$             & 5  & $2.7$e$-$10 & 35.0 & 0.07 & 1.26 & 0.769 \\
+$t_{\text{open}}$ & 4  & $8.7$e$-$04 & 11.2 & 2.92 & 0.88 & 0.283 \\
+$t^{*}$           & 90 & $0.202$     & 2.6  & 4.39 & 2.29 & 0.029 \\
 \midrule
 \multicolumn{7}{l}{\emph{Llama-3.1-8B}} \\
-$t_0$             & 5  & $7.2$e$-$08 & 23.7 & 0.21 & 0.79 & 0.830 \\
-$t_{\text{open}}$ & 4  & $5.3$e$-$03 & 7.56 & 6.24 & 1.01 & 0.238 \\
-$t^{*}$           & 90 & $0.333$     & 1.59 & 6.22 & 2.84 & 0.024 \\
+$t_0$             & 5  & $7.2$e$-$08 & 27.2 & 0.21 & 0.79 & 0.830 \\
+$t_{\text{open}}$ & 4  & $5.3$e$-$03 & 8.4  & 6.24 & 1.01 & 0.238 \\
+$t^{*}$           & 90 & $0.333$     & 1.8  & 6.22 & 2.84 & 0.024 \\
 \bottomrule
 \end{tabular}
 \caption{Harmful prompts, means over 50 ($n\!=\!47$ to $50$ per cell).
 $D_{\mathrm{KL}}$ is $D_{\mathrm{KL}}(P_{\text{mask}}\|P_{\text{free}})$ from
-Eq.~\ref{eq:kl}. All in bits except $R_t$ and $P_{\text{refuse}}$. $|A_t|$ bounds
-$H_{\text{post}}$ above by $\log_2|A_t|$. Benign arms and intervals in
-Appendix~\ref{app:extra}.}
+Eq.~\ref{eq:kl}, averaged over prompts. Note that this is not
+$-\log_2$ of the averaged $R_t$ in the preceding column, which by convexity is
+a lower bound. All quantities in bits except $R_t$ and $P_{\text{refuse}}$.
+$|A_t|$ bounds $H_{\text{post}}$ above by $\log_2|A_t|$. Benign arms and
+intervals in Appendix~\ref{app:extra}.}
 \label{tab:main}
 \end{table}
 
