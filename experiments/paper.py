@@ -55,6 +55,41 @@ ARMS = ["harmful_forced", "benign_forced"]
 # --------------------------------------------------------------------------- #
 # landmarks
 # --------------------------------------------------------------------------- #
+def relabel_legacy(df: pd.DataFrame, grammar: str, benign_source: str) -> pd.DataFrame:
+    """Fill provenance columns for parquets collected before they existed.
+
+    The first Qwen depth run predates the `grammar` / `prompt_source` columns, so
+    its rows load as "?" while later runs say "forced_steps" / "alpaca". Grouping
+    by grammar would then file the two models under different keys and Figure 1
+    would silently show only one of them -- the failure is invisible because the
+    figure still renders.
+
+    Relabelling is announced, never silent: if you ever point this at a legacy
+    parquet from a DIFFERENT grammar, the warning is your cue to pass
+    --legacy-grammar.
+    """
+    # NaN, not "?": when one parquet HAS the column and another does not,
+    # pd.concat fills the missing rows with NaN. Checking only for "?" silently
+    # dropped an entire model from Table 1.
+    for col in ("grammar", "prompt_source"):
+        if col not in df.columns:
+            df[col] = np.nan
+        df[col] = df[col].astype(object).where(df[col].notna(), "?")
+    n = int((df["grammar"] == "?").sum())
+    if n:
+        print(f"!! {n} rows have no `grammar` column (collected before it existed). "
+              f"Relabelling as '{grammar}'. Override with --legacy-grammar.")
+        df.loc[df["grammar"] == "?", "grammar"] = grammar
+    m = int(((df["prompt_source"] == "?") & (df["condition"] == "benign_forced")).sum())
+    if m:
+        print(f"!! {m} benign rows have no `prompt_source`. Relabelling as "
+              f"'{benign_source}'. Override with --legacy-benign.")
+        df.loc[(df["prompt_source"] == "?") & (df["condition"] == "benign_forced"),
+               "prompt_source"] = benign_source
+    df.loc[df["prompt_source"] == "?", "prompt_source"] = "harmbench"
+    return df
+
+
 def landmarks(g: pd.DataFrame) -> dict:
     """Positions of t0 / t_open / t_star for one (condition, prompt) generation."""
     g = g.sort_values("pos")
@@ -391,6 +426,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("parquet", nargs="+", help="one or more collected parquets (globs ok)")
     ap.add_argument("--outdir", default="results/paper")
+    ap.add_argument("--legacy-grammar", default="forced_steps",
+                    help="grammar name to assign to rows collected before the "
+                         "`grammar` column existed")
+    ap.add_argument("--legacy-benign", default="alpaca",
+                    help="benign source for rows collected before `prompt_source`")
     args = ap.parse_args()
 
     paths = [Path(p) for pat in args.parquet for p in glob.glob(pat)] or \
@@ -403,6 +443,7 @@ def main():
         sys.exit("!! parquet predates the t_open instrumentation -- recollect "
                  "(this is the column that separates format shift from semantic commitment).")
 
+    df = relabel_legacy(df, args.legacy_grammar, args.legacy_benign)
     lm = at_landmarks(df)
     lm.to_csv(outdir / "landmarks_per_prompt.csv", index=False)
 
@@ -418,6 +459,8 @@ def main():
     figure_neutral(lm, outdir / "fig3_neutral_scaffold.png")
     figure_coercion_cost(df, lm, outdir / "figA_coercion_cost.png")
     for (model, gram), _ in lm.groupby(["model", "grammar"]):
+        if gram == "none":        # the free arm has no grammar; nothing to plot
+            continue
         tag = f"{_slug(model)}__{_slug(gram)}"
         figure1(lm, outdir / f"fig1_{tag}.png", model, gram)
     for model in sorted(df.model.unique()):
