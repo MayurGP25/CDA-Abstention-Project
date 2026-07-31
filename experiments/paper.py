@@ -222,7 +222,8 @@ def table1_markdown(t: pd.DataFrame) -> str:
             f"{_auroc_ci_cell(r, 'P_refuse')} | "
             f"{r.H_pre_harmful:.2f} | {r.H_pre_benign:.2f} | "
             f"{_auroc_ci_cell(r, 'H_pre')} | "
-            f"{r.n_allowed_median:.0f} | {r.R_mass_harmful:.4f} | "
+            f"{r.n_allowed_median:.0f} | "
+            f"{('%.2e' % r.R_mass_harmful) if r.R_mass_harmful < 1e-3 else ('%.4f' % r.R_mass_harmful)} | "
             f"{r.E_mass_harmful:.4f} | {r.H_post_harmful:.2f} |")
     lines.append("")
     lines.append("AUROC = P(harmful ranks above benign). [INV] marks a value below 0.5, "
@@ -529,8 +530,17 @@ def main():
         print(f"[{model.split('/')[-1]}/{gram}]")
         for k in ["t0", "t_open", "t_star"]:
             if k in r and np.isfinite(r[k]):
-                print(f"   {k:7s} retained {r[k]:.4f}  ->  the served distribution is a "
-                      f"renormalisation of {100*r[k]:.2f}% of the model's belief")
+                sub = g[g.landmark == k]["R_mass"].dropna()
+                _, lo, hi = stats.bootstrap_ci(sub.to_numpy(float))
+                # scientific notation below 1e-3: at t0 the retained mass is the
+                # paper's headline number and "0.0000" hides three orders of it
+                fmt = "{:.3e}" if r[k] < 1e-3 else "{:.4f}"
+                pct = ("{:.4g}".format(100 * r[k]) if r[k] < 1e-3
+                       else "{:.2f}".format(100 * r[k]))
+                print(f"   {k:7s} retained {fmt.format(r[k])} "
+                      f"[95% CI {fmt.format(lo)}, {fmt.format(hi)}]"
+                      f"  ->  the served distribution renormalises {pct}% "
+                      f"of the model's belief")
 
     # ---- the collapse decomposition, printed as a decision aid ------------- #
     print("\n===== collapse decomposition (harmful arm) =====")
