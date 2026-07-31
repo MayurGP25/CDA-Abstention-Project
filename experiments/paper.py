@@ -168,9 +168,16 @@ def table1(lm: pd.DataFrame) -> pd.DataFrame:
                        pos_median=float(h["pos"].median()),
                        n_allowed_median=float(h["n_allowed"].median()),
                        H_post_harmful=float(h["H_post"].mean()),
-                       R_mass_harmful=float(h["R_mass"].mean()),
-                       E_mass_harmful=float(h["E_mass"].mean()),
-                       KL_bits_harmful=float(h["KL_bits"].mean()))
+                       # R_t spans orders of magnitude, so the mean is dominated
+                       # by a few prompts (8-9x the median here) and can even
+                       # reverse a between-condition comparison. Median + IQR is
+                       # the honest summary; the mean is kept for reference only.
+                       R_mass_harmful=float(h["R_mass"].median()),
+                       R_mass_harmful_q1=float(h["R_mass"].quantile(.25)),
+                       R_mass_harmful_q3=float(h["R_mass"].quantile(.75)),
+                       R_mass_harmful_mean=float(h["R_mass"].mean()),
+                       R_mass_benign=(float(b["R_mass"].median()) if len(b) else np.nan),
+                       KL_bits_harmful=float(h["KL_bits"].median()))
             for metric in ("P_refuse", "H_pre"):
                 hv, bv = h[metric].dropna(), b[metric].dropna()
                 rec[f"{metric}_harmful"] = float(hv.mean()) if len(hv) else np.nan
@@ -206,6 +213,13 @@ def _auroc_cell(a: float) -> str:
     return f"{a:.3f}" + (" [INV]" if a < 0.5 else "")
 
 
+def _g(x) -> str:
+    """Compact format for a quantity spanning many orders of magnitude."""
+    if x is None or not np.isfinite(x):
+        return "n/a"
+    return f"{x:.2e}" if x < 1e-3 else f"{x:.4f}"
+
+
 def _auroc_ci_cell(r, metric) -> str:
     a = r[f"{metric}_auroc"]
     lo, hi = r.get(f"{metric}_auroc_lo", np.nan), r.get(f"{metric}_auroc_hi", np.nan)
@@ -220,7 +234,7 @@ def _auroc_ci_cell(r, metric) -> str:
 def table1_markdown(t: pd.DataFrame) -> str:
     lines = ["| model | grammar | landmark | pos | benign src | n | P_refuse (harm) | "
              "P_refuse (benign) | AUROC [95% CI] | H_pre (harm) | H_pre (benign) | "
-             "AUROC [95% CI] | n_allowed | retained R | KL bits | H_post |",
+             "AUROC [95% CI] | n_allowed | R median [IQR] harm | R median benign | H_post |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in t.iterrows():
         lines.append(
@@ -231,8 +245,8 @@ def table1_markdown(t: pd.DataFrame) -> str:
             f"{r.H_pre_harmful:.2f} | {r.H_pre_benign:.2f} | "
             f"{_auroc_ci_cell(r, 'H_pre')} | "
             f"{r.n_allowed_median:.0f} | "
-            f"{('%.2e' % r.R_mass_harmful) if r.R_mass_harmful < 1e-3 else ('%.4f' % r.R_mass_harmful)} | "
-            f"{r.KL_bits_harmful:.1f} | {r.H_post_harmful:.2f} |")
+            f"{_g(r.R_mass_harmful)} [{_g(r.R_mass_harmful_q1)}, {_g(r.R_mass_harmful_q3)}] | "
+            f"{_g(r.R_mass_benign)} | {r.H_post_harmful:.2f} |")
     lines.append("")
     lines.append("AUROC = P(harmful ranks above benign). [INV] marks a value below 0.5, "
                  "i.e. the harmful arm ranks *lower* -- a signed result, not an error. "
@@ -531,25 +545,24 @@ def main():
     # R = exp(-D) = the fraction of the model's own probability mass that the
     # grammar keeps. This needs no refusal phrase list, so it establishes the
     # claim independently of how refusal happens to be spelled.
-    print("\n===== retained vs escaped probability mass (harmful arm) =====")
-    hf = lm[lm.condition == "harmful_forced"]
-    for (model, gram), g in hf.groupby(["model", "grammar"]):
-        r = g.groupby("landmark")["R_mass"].mean()
+    print("\n===== retained probability mass, median [IQR] =====")
+    print("   R_t spans orders of magnitude, so the median is reported. The mean")
+    print("   runs 8-9x higher here and can reverse a between-condition ordering.")
+    for (model, gram), g in lm.groupby(["model", "grammar"]):
+        if gram == "none":
+            continue
         print(f"[{model.split('/')[-1]}/{gram}]")
         for k in ["t0", "t_open", "t_star"]:
-            if k in r and np.isfinite(r[k]):
-                sub = g[g.landmark == k]["R_mass"].dropna()
-                _, lo, hi = stats.bootstrap_ci(sub.to_numpy(float))
-                # scientific notation below 1e-3: at t0 the retained mass is the
-                # paper's headline number and "0.0000" hides three orders of it
-                fmt = "{:.3e}" if r[k] < 1e-3 else "{:.4f}"
-                pct = ("{:.4g}".format(100 * r[k]) if r[k] < 1e-3
-                       else "{:.2f}".format(100 * r[k]))
-                kl = g[g.landmark == k]["KL_bits"].mean()
-                print(f"   {k:7s} retained {fmt.format(r[k])} "
-                      f"[95% CI {fmt.format(lo)}, {fmt.format(hi)}]"
-                      f"   KL(P_mask||P_free) = {kl:.1f} bits"
-                      f"  ->  renormalises {pct}% of the model's belief")
+            row = []
+            for cond, tag in [("harmful_forced", "harm"), ("benign_forced", "benign")]:
+                s = g[(g.landmark == k) & (g.condition == cond)]["R_mass"].dropna()
+                if s.empty:
+                    continue
+                row.append(f"{tag} {_g(s.median())} "
+                           f"[{_g(s.quantile(.25))}, {_g(s.quantile(.75))}] "
+                           f"(mean {_g(s.mean())}, n={len(s)})")
+            if row:
+                print(f"   {k:7s} " + "   ".join(row))
 
     # ---- the collapse decomposition, printed as a decision aid ------------- #
     print("\n===== collapse decomposition (harmful arm) =====")
