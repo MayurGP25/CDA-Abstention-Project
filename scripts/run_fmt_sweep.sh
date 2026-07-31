@@ -23,13 +23,16 @@ set -euo pipefail
 MODEL="${1:?usage: run_fmt_sweep.sh <model-key> [bench]}"
 BENCH="${2:-harmbench}"
 N="${N:-50}"
+# The GPU box has python3 only, no `python` on PATH. Override with PY=... if
+# your interpreter is named something else.
+PY="${PY:-python3}"
 
 # Guard first: never start new collection if the finished runs' digests moved.
-python scripts/check_fingerprint_compat.py
+$PY scripts/check_fingerprint_compat.py
 
 for LEVEL in none neutral terse schema; do
   echo "=== ${MODEL} / ${BENCH} / fmt=${LEVEL} ==="
-  python experiments/collect.py \
+  $PY experiments/collect.py \
     --model "$MODEL" --bench "$BENCH" --n "$N" \
     --exp fmt \
     --format-instruction "$LEVEL" \
