@@ -62,9 +62,25 @@ def load(root: Path) -> pd.DataFrame:
     return df
 
 
+def _arm(row) -> str:
+    """Condition label that keeps the two benign controls apart.
+
+    Alpaca is the easy control and XSTest the hard one. Pooling them gives a
+    median and an AUROC that describe neither, and it silently changed Qwen's
+    terse AUROC from 0.015 to 0.042 the moment the XSTest arm landed. Same
+    mistake paper.py already avoids by emitting a row per source.
+    """
+    if row["condition"] != "benign_forced":
+        return row["condition"]
+    return f"benign/{row.get('prompt_source', '?')}"
+
+
 def summarise(df: pd.DataFrame) -> pd.DataFrame:
+    if "prompt_source" not in df.columns:
+        df["prompt_source"] = "?"
+    df = df.assign(arm=df.apply(_arm, axis=1))
     rows = []
-    for (model, fmt, cond), g in df.groupby(["model", "fmt", "condition"]):
+    for (model, fmt, cond), g in df.groupby(["model", "fmt", "arm"]):
         r = g["R_mass"].to_numpy(float)
         med, lo, hi = bootstrap_ci_median(r)
         rows.append(dict(
@@ -109,18 +125,27 @@ def main():
     # The claim RQ1 rests on: R_t describes the constraint, not the input. It
     # survives only if harmful and benign stay indistinguishable at EVERY level.
     print("\n===== does R_t separate harmful from benign at t0? =====")
-    print("(0.5 = no separation, which is the result we are claiming)")
+    print("(0.5 = no separation. AUROC is P(harmful ranks ABOVE benign), so a")
+    print(" value far BELOW 0.5 means harmful retains LESS mass -- also a signal.)")
+    if "prompt_source" not in df.columns:
+        df["prompt_source"] = "?"
     keys = sorted(df.groupby(["model", "fmt"]).groups,
                   key=lambda k: (k[0], LEVEL_ORDER.index(k[1])
                                  if k[1] in LEVEL_ORDER else 99))
     for model, fmt in keys:
         g = df[(df["model"] == model) & (df["fmt"] == fmt)]
-        h = g[g["condition"] == "harmful_forced"]["R_mass"].to_numpy(float)
-        b = g[g["condition"] == "benign_forced"]["R_mass"].to_numpy(float)
-        if len(h) and len(b):
-            print(f"  {model:<14} fmt={fmt:<8} AUROC(R_t) = {auroc(h, b):.3f}   "
-                  f"AUROC(H_pre) = "
-                  f"{auroc(g[g.condition == 'harmful_forced']['H_pre'].to_numpy(float), g[g.condition == 'benign_forced']['H_pre'].to_numpy(float)):.3f}")
+        hf = g[g["condition"] == "harmful_forced"]
+        # One line per benign source. Pooling an easy control with a hard one
+        # gives an AUROC that describes neither.
+        for src in sorted(g[g["condition"] == "benign_forced"]["prompt_source"].unique()):
+            bf = g[(g["condition"] == "benign_forced") & (g["prompt_source"] == src)]
+            if hf.empty or bf.empty:
+                continue
+            a_r = auroc(hf["R_mass"].to_numpy(float), bf["R_mass"].to_numpy(float))
+            a_h = auroc(hf["H_pre"].to_numpy(float), bf["H_pre"].to_numpy(float))
+            print(f"  {model.split('/')[-1]:<22} fmt={fmt:<8} vs {src:<9} "
+                  f"n={len(hf)}/{len(bf)}  AUROC(R_t) = {a_r:.3f}   "
+                  f"AUROC(H_pre) = {a_h:.3f}")
 
     # Cross-check against the depth runs: the `none` arm here is the same
     # measurement Table 1 makes at t0, so a disagreement means the new prompting
