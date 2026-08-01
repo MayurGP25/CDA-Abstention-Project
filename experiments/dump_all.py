@@ -235,18 +235,51 @@ def s1(df):
     print(f"max D observed      {df['D'].max():.4f} nats "
           f"({df['D'].max() / math.log(2):.2f} bits)")
     print(f"min R observed      {df['R'].min():.3e}")
+
+    # BY EXPERIMENT, because this decides what has to be recollected and what
+    # does not. A run whose censoring is confined to position 0 can source its
+    # t0 row from the cheap fmt sweep and keep its later positions; a run
+    # censored at a landmark has to be run again.
     if at.any():
-        print("\nCENSORED CELLS -- report these as '> {:.1f} bits', not as a number:"
-              .format(CLAMP_D / math.log(2)))
-        print(df[at].groupby(["model", "fmt", "arm"]).size().to_string())
-    t0 = df[df["pos"] == 0]
-    print("\nheadroom at t0 (margin in bits between the cell max and the ceiling;"
-          "\nunder ~2 bits means the next model or seed could hit the floor):")
-    h = (t0.groupby(["model", "fmt", "arm"])["D"]
-           .max().to_frame("D_max_nats"))
-    h["bits"] = h["D_max_nats"] / math.log(2)
-    h["headroom_bits"] = CLAMP_D / math.log(2) - h["bits"]
-    print(h.round(2).to_string())
+        print("\nWHICH RUNS ARE AFFECTED (this decides what to recollect):")
+        by = (df[at].groupby(["_exp", "model", "fmt", "grammar", "arm"])
+                    .agg(censored=("D", "size"),
+                         pos_min=("pos", "min"), pos_max=("pos", "max")))
+        tot = (df.groupby(["_exp", "model", "fmt", "grammar", "arm"])
+                 .size().to_frame("rows"))
+        print(by.join(tot).to_string())
+        print("\npos_min > 0 would mean a landmark is censored, not just t0.")
+
+        print("\nCENSORED ROWS BY POSITION (t0 only is the good case):")
+        print(df[at].groupby(["_exp", "pos"]).size().to_string())
+
+    # Landmark-level verdict. t0 is cheap to recollect (one forward pass per
+    # prompt); the depth runs are not, so what matters is whether anything
+    # AFTER position 0 is at the floor.
+    print("\nPER-LANDMARK MINIMUM HEADROOM (bits below the ceiling; 0.00 = censored):")
+    ceil_bits = CLAMP_D / math.log(2)
+    marks = {"t0": df["pos"] == 0}
+    if "ctx_open" in df.columns:
+        marks["t_open(pos>0)"] = (df["pos"] > 0) & \
+            df["ctx_open"].fillna(False).astype(bool)
+    if "t_star" in df.columns:
+        marks["t_star"] = (df["t_star"].fillna(-1) >= 0) & (df["pos"] == df["t_star"])
+    marks["all pos>0"] = df["pos"] > 0
+    rows = []
+    for name, sel in marks.items():
+        g = df[sel]
+        if g.empty:
+            rows.append(dict(landmark=name, n=0, worst_bits=np.nan,
+                             headroom=np.nan, censored=0))
+            continue
+        worst = float(g["D"].max()) / math.log(2)
+        rows.append(dict(landmark=name, n=len(g), worst_bits=round(worst, 2),
+                         headroom=round(ceil_bits - worst, 2),
+                         censored=int((g["D"] >= CLAMP_D - 1e-6).sum())))
+    print(pd.DataFrame(rows).to_string(index=False))
+    print("\nVERDICT: if `censored` is 0 for every landmark except t0, the depth")
+    print("runs keep their later positions and only t0 needs recollecting, which")
+    print("the fmt sweep already provides at one forward pass per prompt.")
 
 
 # ---------------------------------------------------------------------------
