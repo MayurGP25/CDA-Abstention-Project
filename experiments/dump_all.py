@@ -5,7 +5,13 @@ set of numbers so a decision about what goes in the paper can be made from one
 screen instead of six scripts.
 
     python3 experiments/dump_all.py                 # to stdout
-    python3 experiments/dump_all.py > dump.txt 2>&1 # to paste somewhere
+    python3 experiments/dump_all.py --refresh       # after collecting new data
+
+Reads the MERGED parquet in each run directory rather than its shards. On a
+network filesystem the cost is per file opened, so 150 shard opens per run cost
+minutes while the one merged file they were merged into costs milliseconds. The
+concatenated frame is then cached to results/_dump_cache.parquet, so every run
+after the first is instant. Pass --refresh once new data lands.
 
 Each section is independently wrapped: a run directory with an unexpected
 schema degrades that one section rather than killing the dump. Legacy parquets
@@ -25,9 +31,10 @@ Sections:
 """
 from __future__ import annotations
 
-import glob
+import argparse
 import math
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -73,25 +80,71 @@ def section(n, title, fn, *a, **kw):
 # ---------------------------------------------------------------------------
 # load
 # ---------------------------------------------------------------------------
-def load_all() -> pd.DataFrame:
-    files = sorted(glob.glob(str(ROOT / "results" / "**" / "*.parquet"), recursive=True))
-    # Prefer shards; a merged parquet duplicates rows already present as shards.
-    sh = [f for f in files if f"{'shards'}{'/'}" in f.replace("\\", "/")]
-    keep = sh if sh else files
-    if not keep:
-        raise SystemExit(f"no parquet under {ROOT / 'results'}")
+def _run_dirs(res: Path):
+    """One entry per run directory: (run, exp, files, used_merged).
+
+    MERGED FIRST, and this matters a great deal on a cluster. results/ is on a
+    network mount where the cost is per-file-open, not per-byte: ~100ms of
+    latency times a few thousand shards is minutes of apparent hang. Each run
+    directory also holds a merged parquet with exactly the same rows, written by
+    collect.py at the end of every invocation, so one open replaces 150.
+
+    Shards are the fallback for a directory that has none, which means a run
+    that was interrupted before its merge. Recover it with
+        python3 experiments/collect.py --model M --bench B --exp E --merge-only
+    """
+    out = []
+    for exp in sorted(p for p in res.iterdir() if p.is_dir()):
+        for run in sorted(p for p in exp.iterdir() if p.is_dir()):
+            merged = sorted(f for f in run.glob("*.parquet") if not f.name.startswith("."))
+            if merged:
+                out.append((run.name, exp.name, merged, True))
+                continue
+            sd = run / "shards"
+            if sd.is_dir():
+                sh = sorted(f for f in sd.glob("*.parquet") if not f.name.endswith(".tmp"))
+                if sh:
+                    out.append((run.name, exp.name, sh, False))
+    return out
+
+
+def load_all(cache: Path | None, refresh: bool) -> pd.DataFrame:
+    if cache is not None and cache.exists() and not refresh:
+        df = pd.read_parquet(cache)
+        print(f"[cache] {len(df)} rows from {cache.name} "
+              f"-- pass --refresh to rebuild from results/")
+        return df
+
+    res = ROOT / "results"
+    if not res.is_dir():
+        raise SystemExit(f"no results/ under {ROOT}")
+    units = _run_dirs(res)
+    if not units:
+        raise SystemExit(f"no parquet under {res}")
+
     frames = []
-    for f in keep:
-        try:
-            d = pd.read_parquet(f)
-        except Exception as e:                           # noqa: BLE001
-            print(f"  [skip] {f}: {e!r}")
+    t_start = time.time()
+    for run, exp, files, merged in units:
+        t0 = time.time()
+        got = []
+        for f in files:
+            try:
+                got.append(pd.read_parquet(f))
+            except Exception as e:                       # noqa: BLE001
+                print(f"  [skip] {f.name}: {e!r}")
+        if not got:
             continue
-        d["_run"] = Path(f).parent.parent.name if "shards" in f.replace("\\", "/") \
-            else Path(f).parent.name
-        d["_exp"] = Path(f).relative_to(ROOT / "results").parts[0]
+        d = pd.concat(got, ignore_index=True) if len(got) > 1 else got[0]
+        d["_run"], d["_exp"] = run, exp
         frames.append(d)
+        # Progress, because silence on a network mount is indistinguishable
+        # from a hang and the first version of this script got Ctrl-C'd.
+        print(f"  [{'merged' if merged else 'shards'}] {exp}/{run:<44} "
+              f"{len(d):>7} rows  {len(files):>4} file(s)  {time.time() - t0:5.1f}s",
+              flush=True)
     df = pd.concat(frames, ignore_index=True)
+    print(f"  loaded {len(df)} rows from {len(units)} run dirs in "
+          f"{time.time() - t_start:.1f}s")
 
     # Legacy fills. NaN group keys are silently dropped by groupby.
     for col, fill in (("fmt", "none"), ("grammar", "forced_steps"),
@@ -113,6 +166,12 @@ def load_all() -> pd.DataFrame:
     df["arm"] = np.where(df["condition"] == "benign_forced",
                          "benign/" + df["prompt_source"].astype(str),
                          df["condition"])
+    if cache is not None:
+        try:
+            df.to_parquet(cache, index=False)
+            print(f"[cache] wrote {cache} -- later runs are instant")
+        except Exception as e:                           # noqa: BLE001
+            print(f"[cache] not written ({e!r}); harmless")
     return df
 
 
@@ -343,10 +402,17 @@ def s6(df):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh", action="store_true",
+                    help="rebuild from results/ instead of reading the cache")
+    ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--cache", default=str(ROOT / "results" / "_dump_cache.parquet"))
+    args = ap.parse_args()
+
     print("=" * 78)
     print("== dump_all: every number currently on disk")
     print("=" * 78)
-    df = load_all()
+    df = load_all(None if args.no_cache else Path(args.cache), args.refresh)
     section(0, "INVENTORY", s0, df)
     section(1, "PRECISION AUDIT (is the headline censored?)", s1, df)
     section(2, "t0 TABLE -- the format sweep", s2, df)
