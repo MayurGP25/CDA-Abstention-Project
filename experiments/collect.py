@@ -93,13 +93,16 @@ def main():
                          "sweep; that needs one forward pass per prompt.")
     args = ap.parse_args()
 
-    # The format level goes in the DIRECTORY NAME, not just the fingerprint.
-    # Without it the four levels of a sweep all target one run dir and every
-    # level after the first dies on a fingerprint mismatch -- correct, but
-    # useless. Omitted at "none" so existing run dirs keep their paths.
+    # Anything that is in the FINGERPRINT and that a user would reasonably vary
+    # within one --exp must also be in the DIRECTORY NAME. Otherwise the second
+    # setting targets the first one's directory and dies on a mismatch: correct,
+    # but it just blocks the run. Both suffixes are omitted at their defaults so
+    # existing run directories keep their paths.
     stem = f"{args.model}__{args.bench}"
     if args.format_instruction and args.format_instruction != "none":
         stem += f"__fmt-{args.format_instruction}"
+    if args.benign_source and args.benign_source != "alpaca":
+        stem += f"__ben-{args.benign_source}"
     run_dir = runner.results_dir(args.exp) / stem
     out = run_dir / f"{stem}.parquet"
 
