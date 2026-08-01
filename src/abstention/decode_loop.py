@@ -112,7 +112,9 @@ def run(
             p_con = torch.softmax(masked, dim=-1)
             next_id = int(torch.argmax(p_con).item())
 
-        m = compute_metrics(p_free, p_con, allowed, R, next_id)
+        # `logits` are passed so D is computed in log space. Without them the
+        # probability-space sum floors at 1e-12, which censored 73 rows.
+        m = compute_metrics(p_free, p_con, allowed, R, next_id, logits=logits)
         # Position-0 and JSON string-value openings are the syntactically fresh
         # starts where a refusal is a grammatical continuation. `decoded` is the
         # context BEFORE this step, which is exactly what S_R conditions on.

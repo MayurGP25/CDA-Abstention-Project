@@ -64,6 +64,7 @@ def compute_metrics(
     allowed: torch.Tensor,
     refusal_ids: torch.Tensor,
     forced_id: int,
+    logits: torch.Tensor | None = None,
 ) -> StepMetrics:
     """Compute the four metrics for one step.
 
@@ -75,6 +76,8 @@ def compute_metrics(
         allowed:     (V,) bool, True where the grammar permits the token.
         refusal_ids: (K,) long, ids of refusal/abstention-initiating tokens (R).
         forced_id:   the token id emitted at this step.
+        logits:      (V,) PRE-mask logits. Optional but strongly preferred: it is
+                     what makes D exact in the tail. See the note on M2 below.
     """
     p_free = p_free.double()
     p_con = p_con.double()
@@ -96,8 +99,29 @@ def compute_metrics(
     # the free probability mass on the grammar-allowed set. p_con is unused here
     # (the closed form needs only p_free); the decode loop still uses p_con to
     # pick the emitted token.
-    Z_A = p_free[allowed].sum().clamp(_EPS, 1.0)  # a probability mass; >=0 KL
-    D = -Z_A.log()
+    #
+    # COMPUTED IN LOG SPACE when the logits are available, and this is not a
+    # micro-optimisation. Summing probabilities and taking a log floors the
+    # result at the clamp: with _EPS = 1e-12 every Z_A below that reported as
+    # exactly 1e-12, and on Qwen at position 0 that censored 73 rows, pinning
+    # several lower quartiles to a value the grammar never produced. The true
+    # masses there are smaller than float32 probability space can express after
+    # a softmax, but the LOG of the ratio is perfectly well determined:
+    #
+    #     log Z_A = logsumexp(logits[A]) - logsumexp(logits)
+    #
+    # is exact, stable, and has no floor. Precision lives in the exponent, which
+    # is the honest place for it -- a bf16 logit is good to ~0.06 nats, so a
+    # 53-bit reading carries about 0.09 bits of uncertainty regardless of how
+    # tiny the corresponding probability is. Report bits, not masses.
+    if logits is not None:
+        lg = logits.double()
+        D = torch.logsumexp(lg, 0) - torch.logsumexp(lg[allowed], 0)
+    else:
+        # Fallback for callers holding only probabilities (tests, and any
+        # analysis re-derived from stored distributions). Floors as described.
+        Z_A = p_free[allowed].sum().clamp(_EPS, 1.0)
+        D = -Z_A.log()
 
     # M4 -- surprisal of the forced token under the free distribution.
     s = -(p_free[forced_id].clamp_min(_EPS)).log()

@@ -108,7 +108,8 @@ def _run_dirs(res: Path):
     return out
 
 
-def load_all(cache: Path | None, refresh: bool) -> pd.DataFrame:
+def load_all(cache: Path | None, refresh: bool,
+             only: set[str] | None = None, skip: set[str] | None = None) -> pd.DataFrame:
     if cache is not None and cache.exists() and not refresh:
         df = pd.read_parquet(cache)
         print(f"[cache] {len(df)} rows from {cache.name} "
@@ -119,6 +120,10 @@ def load_all(cache: Path | None, refresh: bool) -> pd.DataFrame:
     if not res.is_dir():
         raise SystemExit(f"no results/ under {ROOT}")
     units = _run_dirs(res)
+    if only:
+        units = [u for u in units if u[1] in only]
+    if skip:
+        units = [u for u in units if u[1] not in skip]
     if not units:
         raise SystemExit(f"no parquet under {res}")
 
@@ -158,6 +163,18 @@ def load_all(cache: Path | None, refresh: bool) -> pd.DataFrame:
             df[col] = df[col].fillna(fill)
 
     df["model"] = df["model"].astype(str).str.split("/").str[-1]
+    df["_key"] = df["_exp"] + "/" + df["_run"]      # `_run` alone collides: the
+    # same directory name exists under depth/ and fmt/, which silently merged
+    # two runs into one group.
+
+    # The depth and neutral runs predate `prompt_source` and used the default
+    # benign set, so their '?' is Alpaca. Leaving it as '?' puts the SAME
+    # measurement in the table twice under two labels.
+    legacy_ben = (df["prompt_source"] == "?") & (df["condition"] == "benign_forced")
+    if legacy_ben.any():
+        print(f"  [legacy] prompt_source: relabelled {int(legacy_ben.sum())} "
+              f"benign rows '?' -> 'alpaca' (pre-dates the column; default source)")
+        df.loc[legacy_ben, "prompt_source"] = "alpaca"
     df["D"] = df["D"].astype(float)
     df["R"] = np.exp(-df["D"])
     with np.errstate(divide="ignore"):
@@ -238,10 +255,10 @@ def s1(df):
 def s2(df):
     t0 = df[df["pos"] == 0].copy()
     rows = []
-    for (m, f, a), g in t0.groupby(["model", "fmt", "arm"]):
+    for (m, f, gr, a), g in t0.groupby(["model", "fmt", "grammar", "arm"]):
         med, q1, q3 = _iqr(g["R"])
         rows.append(dict(
-            model=m, fmt=f, arm=a, n=len(g),
+            model=m, fmt=f, gram=gr, arm=a, n=len(g),
             A=float(g["n_allowed"].median()),
             R_med=med, R_q1=q1, R_q3=q3,
             R_mean=float(np.nanmean(g["R"])),        # for the Reddy comparison
@@ -253,13 +270,13 @@ def s2(df):
         ))
     t = pd.DataFrame(rows)
     t["_o"] = t["fmt"].map({k: i for i, k in enumerate(LEVELS)}).fillna(99)
-    t = t.sort_values(["model", "_o", "arm"]).drop(columns="_o")
+    t = t.sort_values(["model", "_o", "gram", "arm"]).drop(columns="_o")
 
-    print("| model | fmt | arm | n | |A| | R median [IQR] | R mean | -log2R | "
-          "H_pre | H_post | log2|A| | P_refuse |")
-    print("|" + "---|" * 12)
+    print("| model | fmt | grammar | arm | n | |A| | R median [IQR] | R mean | "
+          "-log2R | H_pre | H_post | log2|A| | P_refuse |")
+    print("|" + "---|" * 13)
     for r in t.itertuples():
-        print(f"| {r.model} | {r.fmt} | {r.arm} | {r.n} | {r.A:.0f} | "
+        print(f"| {r.model} | {r.fmt} | {r.gram} | {r.arm} | {r.n} | {r.A:.0f} | "
               f"{r.R_med:.3e} [{r.R_q1:.1e}, {r.R_q3:.1e}] | {r.R_mean:.3e} | "
               f"{r.bits_med:.1f} | {r.H_pre:.2f} | {r.H_post:.2f} | "
               f"{r.logA:.2f} | {r.P_ref:.3f} |")
@@ -276,9 +293,9 @@ def s3(df):
     print("AUROC = P(harmful ranks ABOVE benign). 0.5 = no separation.")
     print("Far below 0.5 is also separation, in the other direction.")
     print("n=50/50 gives SE ~0.06, so do NOT compare two AUROCs to each other.\n")
-    print("| model | fmt | vs | n_h/n_b | R_t | H_pre | H_post | P_refuse |")
-    print("|" + "---|" * 8)
-    for (m, f), g in t0.groupby(["model", "fmt"]):
+    print("| model | fmt | grammar | vs | n_h/n_b | R_t | H_pre | H_post | P_refuse |")
+    print("|" + "---|" * 9)
+    for (m, f, gr), g in t0.groupby(["model", "fmt", "grammar"]):
         hf = g[g["condition"] == "harmful_forced"]
         if hf.empty:
             continue
@@ -289,7 +306,7 @@ def s3(df):
             vals = []
             for col in ("R", "H_pre", "H_post", "P_refuse"):
                 vals.append(auroc(hf[col].to_numpy(float), bf[col].to_numpy(float)))
-            print(f"| {m} | {f} | {src} | {len(hf)}/{len(bf)} | "
+            print(f"| {m} | {f} | {gr} | {src} | {len(hf)}/{len(bf)} | "
                   + " | ".join(f"{v:.3f}" for v in vals) + " |")
 
 
@@ -305,10 +322,10 @@ def s4(df):
     p0 = d[d["pos"] == 0].assign(landmark="t0")
     parts.append(p0)
     if "ctx_open" in d.columns:
-        op = d[d["ctx_open"].fillna(False).astype(bool)]
+        op = d[(d["pos"] > 0) & (d["ctx_open"].fillna(False).astype(bool))]
         if not op.empty:
             first = op.sort_values("pos").groupby(
-                ["_run", "model", "condition", "prompt_id"], as_index=False).first()
+                ["_key", "model", "condition", "prompt_id"], as_index=False).first()
             parts.append(first.assign(landmark="t_open"))
     ts = d[(d["t_star"].fillna(-1) >= 0) & (d["pos"] == d["t_star"])]
     if not ts.empty:
@@ -316,9 +333,9 @@ def s4(df):
     L = pd.concat(parts, ignore_index=True)
 
     rows = []
-    for (m, f, a, lm), g in L.groupby(["model", "fmt", "arm", "landmark"]):
+    for (m, f, gr, a, lm), g in L.groupby(["model", "fmt", "grammar", "arm", "landmark"]):
         med, q1, q3 = _iqr(g["R"])
-        rows.append(dict(model=m, fmt=f, arm=a, landmark=lm, n=len(g),
+        rows.append(dict(model=m, fmt=f, gram=gr, arm=a, landmark=lm, n=len(g),
                          pos_med=float(np.nanmedian(g["pos"])),
                          A=float(g["n_allowed"].median()),
                          R_med=med, R_q1=q1, R_q3=q3,
@@ -328,19 +345,21 @@ def s4(df):
     t = pd.DataFrame(rows)
     order = {"t0": 0, "t_open": 1, "t_star": 2}
     t["_o"] = t["landmark"].map(order)
-    t = t.sort_values(["model", "fmt", "arm", "_o"]).drop(columns="_o")
-    print("| model | fmt | arm | landmark | n | pos | |A| | R median [IQR] | "
-          "H_pre | H_post | P_refuse |")
-    print("|" + "---|" * 11)
+    t = t.sort_values(["model", "fmt", "gram", "arm", "_o"]).drop(columns="_o")
+    print("| model | fmt | grammar | arm | landmark | n | pos | |A| | "
+          "R median [IQR] | H_pre | H_post | P_refuse |")
+    print("|" + "---|" * 12)
     for r in t.itertuples():
-        print(f"| {r.model} | {r.fmt} | {r.arm} | {r.landmark} | {r.n} | "
+        print(f"| {r.model} | {r.fmt} | {r.gram} | {r.arm} | {r.landmark} | {r.n} | "
               f"{r.pos_med:.0f} | {r.A:.0f} | "
               f"{r.R_med:.3e} [{r.R_q1:.1e}, {r.R_q3:.1e}] | "
               f"{r.H_pre:.2f} | {r.H_post:.2f} | {r.P_ref:.3f} |")
     print("\nt* coverage (generations where the anchor was found):")
     if "t_star" in df.columns:
-        cov = (df.groupby(["model", "_exp"])["t_star"]
-                 .apply(lambda s: f"{(s >= 0).sum()}/{len(s)} rows"))
+        gen = df[df["condition"] != "free"].groupby(
+            ["model", "_exp", "_run", "condition", "prompt_id"], as_index=False)["t_star"].first()
+        cov = (gen.groupby(["model", "_exp", "condition"])["t_star"]
+                  .apply(lambda s: f"{(s >= 0).sum()}/{len(s)} generations"))
         print(cov.to_string())
 
 
@@ -380,7 +399,7 @@ def s6(df):
     print("    a KL comparison are not interchangeable. Quote alpha, not bits,")
     print("    when comparing to their table.\n")
     d = df[df["condition"].isin(["harmful_forced", "benign_forced"])]
-    have_depth = d.groupby(["model", "_exp", "arm"])["pos"].max()
+    have_depth = d.groupby(["model", "_exp", "grammar", "arm"])["pos"].max()
     multi = have_depth[have_depth > 0]
     if multi.empty:
         print("No multi-position runs on disk, so a sequence-averaged alpha")
@@ -390,13 +409,13 @@ def s6(df):
     print("SEQUENCE-AVERAGED alpha, aggregated exactly their way")
     print("(mean over all generated positions within a generation, then mean")
     print(" over generations). This is the only directly comparable number:\n")
-    dd = d[d.set_index(["model", "_exp", "arm"]).index.isin(multi.index)]
+    dd = d[d.set_index(["model", "_exp", "grammar", "arm"]).index.isin(multi.index)]
     per_gen = dd.groupby(["model", "_exp", "arm", "prompt_id"], as_index=False)["R"].mean()
-    out = per_gen.groupby(["model", "_exp", "arm"])["R"].agg(
+    out = per_gen.groupby(["model", "_exp", "grammar", "arm"])["R"].agg(
         n="size", alpha_seq_mean="mean", alpha_seq_median="median").round(4)
     print(out.to_string())
     print("\nAnd the same runs at t0 only, for the position contrast:")
-    t0 = dd[dd["pos"] == 0].groupby(["model", "_exp", "arm"])["R"].agg(
+    t0 = dd[dd["pos"] == 0].groupby(["model", "_exp", "grammar", "arm"])["R"].agg(
         n="size", alpha_t0_mean="mean", alpha_t0_median="median")
     print(t0.to_string())
 
@@ -407,12 +426,24 @@ def main():
                     help="rebuild from results/ instead of reading the cache")
     ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("--cache", default=str(ROOT / "results" / "_dump_cache.parquet"))
+    ap.add_argument("--only", default=None,
+                    help="comma-separated results/ subdirs to include, e.g. fmt2,depth. "
+                         "Two sweeps of the same conditions must never be pooled: "
+                         "they would appear as one arm with double n.")
+    ap.add_argument("--skip", default=None, help="comma-separated subdirs to exclude")
     args = ap.parse_args()
 
     print("=" * 78)
     print("== dump_all: every number currently on disk")
     print("=" * 78)
-    df = load_all(None if args.no_cache else Path(args.cache), args.refresh)
+    only = set(args.only.split(",")) if args.only else None
+    skip = set(args.skip.split(",")) if args.skip else None
+    if (only or skip) and not args.no_cache and not args.refresh:
+        # The cache holds whatever the last run loaded. Filtering it after the
+        # fact would silently ignore --only.
+        print("[cache] --only/--skip given: forcing a rebuild so the filter applies")
+        args.refresh = True
+    df = load_all(None if args.no_cache else Path(args.cache), args.refresh, only, skip)
     section(0, "INVENTORY", s0, df)
     section(1, "PRECISION AUDIT (is the headline censored?)", s1, df)
     section(2, "t0 TABLE -- the format sweep", s2, df)
