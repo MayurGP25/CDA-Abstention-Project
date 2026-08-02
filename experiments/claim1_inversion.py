@@ -67,9 +67,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--cache", default=str(ROOT / "results" / "_dump_cache.parquet"))
+    ap.add_argument("--only", default=None,
+                    help="comma-separated results/ subdirs. AFTER the log-space "
+                         "recollection both fmt/ and fmt2/ exist and hold the same "
+                         "conditions, so without this the dedupe keeps whichever "
+                         "loaded first -- possibly the censored one. Pass --only fmt2.")
     args = ap.parse_args()
 
-    df = load_all(Path(args.cache), args.refresh)
+    only = set(args.only.split(",")) if args.only else None
+    if only:
+        args.refresh = True      # the cache holds whatever the last run loaded
+    df = load_all(Path(args.cache), args.refresh, only)
     d = df[(df["pos"] == 0)
            & (df["fmt"].isin(REGIME))
            & (df["grammar"] == "forced_steps")
