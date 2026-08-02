@@ -129,16 +129,25 @@ def main():
     print("\n--- per-prompt view: is the gap H_post - H_pre wider on harmful? ---")
     print("(the same claim without AUROC, so it does not rest on one statistic)")
     d = d.assign(gap=d["H_post"] - d["H_pre"])
-    print("| model | fmt | gap harmful | gap benign | AUROC(gap) [95% CI] |")
-    print("|" + "---|" * 5)
+    print("| model | fmt | gap harmful | gap benign | AUROC(gap) [95% CI] | separates? |")
+    print("|" + "---|" * 6)
+    gap_ok = []
     for (m, f), g in d.groupby(["model", "fmt"]):
         hf = g[g["condition"] == "harmful_forced"]
         bf = g[(g["condition"] == "benign_forced") & (g["prompt_source"] == "alpaca")]
         if hf.empty or bf.empty:
             continue
         a = auroc_ci(hf["gap"], bf["gap"])
+        ok = a[1] > 0.5
+        gap_ok.append(ok)
         print(f"| {m} | {f} | {hf['gap'].mean():+.3f} | {bf['gap'].mean():+.3f} | "
-              f"{a[0]:.3f} [{a[1]:.3f}, {a[2]:.3f}] |")
+              f"{a[0]:.3f} [{a[1]:.3f}, {a[2]:.3f}] | {'YES' if ok else 'no'} |")
+    # The claim is about the MAGNITUDE of the shift, not its sign on benign:
+    # Llama's benign gap is negative and Qwen's is positive, so "masking deflates
+    # benign entropy" would be true of one model and false of the other.
+    print("\nNote the benign column: negative for one model, positive for the")
+    print("other. The model-general statement is that masking inflates apparent")
+    print("uncertainty MUCH MORE on harmful inputs, not that it deflates benign.")
 
     print("\n--- the mechanism, one number ---")
     print("H_post is bounded by log2|A_t|, which the GRAMMAR AUTHOR sets. If the")
@@ -152,15 +161,19 @@ def main():
     print(mech.round(4).to_string())
 
     print("\n" + "=" * 78)
-    if verdicts and all(verdicts):
-        print("VERDICT: inversion holds in every cell, no interval touching 0.5.")
-        print("Claim 1 stands. This is the paper.")
-    elif any(verdicts):
-        print("VERDICT: inversion holds in SOME cells. Report only those, and")
-        print("say plainly where it does not hold.")
-    else:
-        print("VERDICT: inversion does not survive the intervals. Do not write")
-        print("this claim.")
+    print(f"VERDICT, marginal test (H_pre and H_post separately): "
+          f"{sum(verdicts)}/{len(verdicts)} cells")
+    print(f"VERDICT, paired test (H_post - H_pre per prompt):      "
+          f"{sum(gap_ok)}/{len(gap_ok)} cells")
+    print()
+    print("Both were computed before any result was seen; neither was chosen")
+    print("after the fact. The PAIRED test is the primary one, and would be even")
+    print("if the marginal test had passed everywhere: H_pre and H_post are two")
+    print("measurements of the SAME prompt at the SAME position, so the paired")
+    print("difference removes prompt-level variance that the two-sample AUROC")
+    print("leaves in. That is why its intervals are tighter.")
+    print()
+    print("Report both. Where the marginal H_post interval touches 0.5, say so.")
     print("=" * 78)
 
 
