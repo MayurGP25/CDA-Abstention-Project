@@ -46,7 +46,14 @@ def main():
 
     only = set(args.only.split(",")) if args.only else None
     df = load_all(Path(args.cache), args.refresh, only)
-    d = df[(df["pos"] == 0) & (df["grammar"] == "forced_steps")].copy()
+    # The free arm carries no mask, so its R_t is 1.0 by construction and it has
+    # no place in a table about what masking does. It survives the grammar
+    # filter only because the legacy depth parquet labels it inconsistently --
+    # 'forced_steps' for one model, 'none' for the other -- so exclude it by
+    # CONDITION, which is what actually distinguishes it.
+    d = df[(df["pos"] == 0)
+           & (df["grammar"] == "forced_steps")
+           & (df["condition"].isin(["harmful_forced", "benign_forced"]))].copy()
     d = d.drop_duplicates(subset=["model", "fmt", "grammar", "arm", "prompt_id"])
 
     print("=" * 78)

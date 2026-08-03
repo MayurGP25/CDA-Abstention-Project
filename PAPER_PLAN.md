@@ -85,11 +85,14 @@ Each is one command. Nothing is written until the claim above it is checked.
   bits against the old 39.86-bit clamp ceiling.
   `GPU=7 bash scripts/rerun_fmt_logspace.sh`
 
-- **[ ] C3 — scope.** Where the inversion stops. The format sweep, reported as
-  a boundary rather than a result.
+- **[x] C3 — scope.** VALIDATED 3 Aug 2026. Inversion holds in the unannounced
+  regime and in none of the eight aligned cells. Three regimes governed by
+  `R_t`. See the working log.
+  `python3 experiments/claim3_scope.py --only fmt2,depth`
 
-- **[ ] C4 — the supporting sentence.** `P_refuse` on harmful under the free
-  condition, to explain low `H_pre`. One number.
+- **[x] C4 — the supporting sentences.** VALIDATED 3 Aug 2026. `P_refuse` on
+  harmful at t0 is 0.83 (Llama) and 0.77 (Qwen) unannounced; the unconstrained
+  refusal rate is 0.88 on both models (44/50).
 
 ## Decisions already made, not to be reopened
 
@@ -209,8 +212,71 @@ Note also that Llama's `R_t` is two to three orders of magnitude larger than
 Qwen's and both show the inversion, so the effect is not sensitive to the exact
 magnitude of the retained mass.
 
-### C3
-_pending_
+### C3 — validated 3 Aug 2026
 
-### C4
-_pending_
+Inversion holds in the unannounced regime and in **none** of the eight aligned
+cells. 3 of 12 across the whole axis, and the three are exactly the unannounced
+ones (Qwen/none marginal at [0.499, 0.719]).
+
+**Sign test across the format axis.**
+
+| model | fmt | vs | AUROC(H_pre) [CI] | AUROC(H_post) [CI] | inverted |
+|---|---|---|---|---|---|
+| Llama | none | alpaca | 0.175 [0.100, 0.260] | 0.690 [0.579, 0.795] | YES |
+| Llama | neutral | alpaca | 0.125 [0.060, 0.202] | 0.728 [0.622, 0.825] | YES |
+| Llama | terse | alpaca | 0.026 [0.005, 0.059] | 0.499 [0.382, 0.618] | no |
+| Llama | terse | xstest | 0.392 [0.276, 0.511] | 0.733 [0.627, 0.830] | no |
+| Llama | schema | alpaca | 0.049 [0.014, 0.096] | 0.439 [0.327, 0.554] | no |
+| Llama | schema | xstest | 0.301 [0.201, 0.411] | 0.478 [0.362, 0.594] | no |
+| Qwen | none | alpaca | 0.158 [0.073, 0.252] | 0.613 [0.499, 0.719] | marginal |
+| Qwen | neutral | alpaca | 0.157 [0.076, 0.250] | 0.750 [0.650, 0.838] | YES |
+| Qwen | terse | alpaca | 0.914 [0.851, 0.965] | 0.798 [0.704, 0.882] | no |
+| Qwen | terse | xstest | 0.562 [0.443, 0.678] | 0.402 [0.275, 0.532] | no |
+| Qwen | schema | alpaca | 0.757 [0.655, 0.849] | 0.339 [0.235, 0.450] | no |
+| Qwen | schema | xstest | 0.403 [0.290, 0.517] | 0.277 [0.176, 0.381] | no |
+
+**Retained mass across the same axis**, harmful / benign-alpaca medians:
+
+| model | none | neutral | terse | schema |
+|---|---|---|---|---|
+| Llama | 7.7e-09 / 4.3e-09 | 1.2e-09 / 1.5e-09 | 1.3e-08 / **0.206** | 1.6e-08 / **6.8e-03** |
+| Qwen | 3.6e-11 / 1.6e-11 | 7.4e-12 / 9.5e-12 | **0.278** / **0.9995** | **0.841** / **0.663** |
+
+**THREE REGIMES, governed by one scalar.** This is the scope paragraph, and it
+demonstrates the paper's recommendation rather than asserting it.
+
+1. **Both `R_t` tiny** (unannounced, both models). The served distribution is a
+   renormalised near-zero tail. `H_post` inverts relative to `H_pre`.
+2. **Both `R_t` large** (Qwen under terse/schema). The served distribution is
+   close to the model's own. `H_pre` and `H_post` now AGREE (0.914 and 0.798),
+   which is the predicted non-inverted behaviour.
+3. **Mixed** (Llama under terse: benign 0.206, harmful 1.3e-08). `H_pre` still
+   separates strongly (0.026) but `H_post` carries no signal at all (0.499).
+
+**Why the two models leave the regime differently**, and this is the honest
+explanation the section needs. Under an explicit format instruction Llama keeps
+its refusal disposition while Qwen's collapses:
+
+| P_refuse on harmful | none | neutral | terse | schema |
+|---|---|---|---|---|
+| Llama | 0.830 | 0.884 | 0.892 | 0.869 |
+| Qwen | 0.769 | 0.660 | 0.071 | 0.000 |
+
+So for Qwen under an aligned prompt the premise of the claim fails outright:
+there is no forbidden preference left to invert. For Llama the preference
+survives but the mask stops being the dominant effect on the benign side.
+
+**Also state:** Qwen's XSTest `H_post` (1.481 unannounced) exceeds its harmful
+`H_post` (1.255). Safe-but-alarming prompts look more uncertain than harmful
+ones, because `H_post` inherits the model's over-refusal. A caveat, not a
+counterexample, and it belongs in Scope.
+
+### C4 — validated 3 Aug 2026
+
+Both numbers are prose, never table columns.
+
+- **`P_refuse` on harmful at t0, unannounced:** 0.830 (Llama), 0.769 (Qwen).
+  This is why `H_pre` is low there. Without it, "the model is more certain on
+  harmful prompts" is an unexplained fact.
+- **Unconstrained refusal rate:** 44/50 = **0.88 on both models**. The
+  disposition being measured is one the model acts on when free to.
