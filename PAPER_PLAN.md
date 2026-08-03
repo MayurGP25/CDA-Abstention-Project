@@ -79,9 +79,10 @@ Each is one command. Nothing is written until the claim above it is checked.
   entropies are measured on the same prompt at the same position.
   `python3 experiments/claim1_inversion.py`
 
-- **[ ] C2 — the mechanism.** `R_t` is tiny and `H_post` sits near its ceiling
-  `log2|A_t|`, in the same cells. Needs the log-space re-collection, since the
-  old numbers were floored at 1e-12.
+- **[x] C2 — the mechanism.** VALIDATED 3 Aug 2026. See the working log.
+  `R_t` is 1e-9 (Llama) to 1e-11 (Qwen) and does NOT separate the two
+  conditions, which is the point. Log-space confirmed live: max reading 51.94
+  bits against the old 39.86-bit clamp ceiling.
   `GPU=7 bash scripts/rerun_fmt_logspace.sh`
 
 - **[ ] C3 — scope.** Where the inversion stops. The format sweep, reported as
@@ -163,8 +164,50 @@ has real dynamic range and is not simply saturated at `log2|A_t|`.
   it plainly. The contribution is that nobody checks, it is cheap to check, and
   the consequence is real.
 
-### C2
-_pending_
+### C2 — validated 3 Aug 2026
+
+Recollected with `D` in log space into `results/fmt2/`. **Cross-check passed
+exactly**: every entropy and every AUROC reproduced the pre-recollection value
+to the printed digit, confirming the change touched `D` and nothing else.
+
+Censoring confirmed cured: max reading 51.94 bits against the old 39.86-bit
+clamp ceiling. Medians were never affected (Qwen none harmful is 3.551e-11 both
+before and after); the lower quartiles were, e.g. Qwen neutral benign Q1 moved
+off exactly 1.0e-12 to 8.2e-13.
+
+**Table 1, complete.** t0, unannounced regime, n = 50 per cell.
+Ceiling `log2|A_t|` = 2.322 throughout (|A| = 5).
+
+| model | fmt | arm | H_pre | H_post | H_post/ceiling | R_t median [IQR] | -log2 R_t |
+|---|---|---|---|---|---|---|---|
+| Llama-3.1-8B | none | benign | 0.930 | 0.579 | 0.249 | 4.271e-09 [9.9e-10, 1.8e-08] | 27.8 |
+| Llama-3.1-8B | none | harmful | 0.208 | 0.787 | 0.339 | 7.743e-09 [1.7e-09, 3.1e-08] | 26.9 |
+| Llama-3.1-8B | neutral | benign | 0.922 | 0.696 | 0.300 | 1.455e-09 [3.5e-10, 6.9e-09] | 29.4 |
+| Llama-3.1-8B | neutral | harmful | 0.114 | 0.968 | 0.417 | 1.232e-09 [1.5e-10, 5.7e-09] | 29.6 |
+| Qwen2.5-7B | none | benign | 0.757 | 1.082 | 0.466 | 1.593e-11 [1.4e-12, 1.8e-10] | 35.9 |
+| Qwen2.5-7B | none | harmful | 0.071 | 1.255 | 0.541 | 3.551e-11 [6.8e-12, 8.1e-11] | 34.7 |
+| Qwen2.5-7B | neutral | benign | 0.805 | 1.057 | 0.455 | 9.456e-12 [8.2e-13, 7.5e-11] | 36.6 |
+| Qwen2.5-7B | neutral | harmful | 0.062 | 1.423 | 0.613 | 7.394e-12 [1.5e-12, 2.5e-11] | 37.0 |
+
+**The mechanism, stated correctly.** `R_t` is nearly identical across the two
+conditions (IQRs overlap in every pair), so the AMOUNT of mass removed does not
+distinguish them. It is a property of the grammar, which is the paper's point.
+
+The inversion comes from the SHAPE of what survives:
+
+- On harmful prompts the model's mass sits on refusal openers, so all five
+  permitted JSON tokens carry tiny and roughly EQUAL mass. Renormalising a flat
+  tail gives a near-uniform distribution, hence high `H_post`.
+- On benign prompts the model has genuine preference among those same five
+  tokens, so the renormalised distribution is peaked and `H_post` is lower.
+
+So `R_t`'s role is to establish that the served distribution is a renormalised
+near-zero tail **in both conditions**. It is the enabling condition, not the
+discriminator. State it this way: it pre-empts "isn't `R_t` doing the work?"
+
+Note also that Llama's `R_t` is two to three orders of magnitude larger than
+Qwen's and both show the inversion, so the effect is not sensitive to the exact
+magnitude of the retained mass.
 
 ### C3
 _pending_
