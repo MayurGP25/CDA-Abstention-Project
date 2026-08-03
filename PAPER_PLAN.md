@@ -16,10 +16,14 @@ into the working log at the bottom.
 
 One observation, one mechanism, one consequence, one remedy.
 
-- **Mechanism.** The mask retains ~1e-11 of the model's probability mass at the
-  first token, so what remains is close to a uniform draw over a handful of
-  syntactic tokens. How uniform depends on how concentrated the model's
-  preference was *outside* the allowed set, which inverts the ordering.
+- **Mechanism.** The mask retains between 1e-9 and 1e-11 of the model's
+  probability mass at the first token, in BOTH conditions, so the served
+  distribution is a renormalised near-zero tail either way. `R_t` is therefore
+  the enabling condition, not the discriminator. What inverts the ordering is
+  the SHAPE of that tail: where the model's mass sits on a forbidden
+  continuation, the permitted tokens carry tiny and roughly equal mass and
+  renormalise to near-uniform, while where the model has real preference among
+  the permitted tokens the result stays peaked.
 - **Consequence.** Uncertainty-gated abstention, routing and hallucination
   detection fire backwards on structured-output pipelines.
 - **Remedy.** Report retained mass alongside any entropy computed under a
