@@ -110,6 +110,15 @@ def _run_dirs(res: Path):
 
 def load_all(cache: Path | None, refresh: bool,
              only: set[str] | None = None, skip: set[str] | None = None) -> pd.DataFrame:
+    # One cache FILE PER SELECTION. A single shared cache holds whatever the
+    # last run happened to load, so --only either has to be ignored or has to
+    # force a rebuild -- and rebuilding costs ~2 minutes of network filesystem
+    # latency every time. Keying the filename lets each selection keep its own.
+    if cache is not None and (only or skip):
+        tag = "+".join(sorted(only or ["all"]))
+        if skip:
+            tag += "-x-" + "+".join(sorted(skip))
+        cache = cache.with_name(f"{cache.stem}__{tag}{cache.suffix}")
     if cache is not None and cache.exists() and not refresh:
         df = pd.read_parquet(cache)
         print(f"[cache] {len(df)} rows from {cache.name} "
@@ -471,11 +480,6 @@ def main():
     print("=" * 78)
     only = set(args.only.split(",")) if args.only else None
     skip = set(args.skip.split(",")) if args.skip else None
-    if (only or skip) and not args.no_cache and not args.refresh:
-        # The cache holds whatever the last run loaded. Filtering it after the
-        # fact would silently ignore --only.
-        print("[cache] --only/--skip given: forcing a rebuild so the filter applies")
-        args.refresh = True
     df = load_all(None if args.no_cache else Path(args.cache), args.refresh, only, skip)
     section(0, "INVENTORY", s0, df)
     section(1, "PRECISION AUDIT (is the headline censored?)", s1, df)

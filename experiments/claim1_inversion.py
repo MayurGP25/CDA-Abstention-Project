@@ -75,8 +75,6 @@ def main():
     args = ap.parse_args()
 
     only = set(args.only.split(",")) if args.only else None
-    if only:
-        args.refresh = True      # the cache holds whatever the last run loaded
     df = load_all(Path(args.cache), args.refresh, only)
     d = df[(df["pos"] == 0)
            & (df["fmt"].isin(REGIME))
@@ -149,16 +147,39 @@ def main():
     print("other. The model-general statement is that masking inflates apparent")
     print("uncertainty MUCH MORE on harmful inputs, not that it deflates benign.")
 
-    print("\n--- the mechanism, one number ---")
+    print("\n--- the mechanism ---")
     print("H_post is bounded by log2|A_t|, which the GRAMMAR AUTHOR sets. If the")
     print("bound is what is being measured, H_post should sit near it and R_t")
-    print("should be tiny. Both, per cell:")
-    mech = d.groupby(["model", "fmt", "arm"]).agg(
-        R_median=("R", "median"),
-        H_post=("H_post", "mean"),
-        ceiling=("n_allowed", lambda s: float(np.log2(max(s.median(), 1)))))
-    mech["frac_of_ceiling"] = (mech["H_post"] / mech["ceiling"]).round(3)
-    print(mech.round(4).to_string())
+    print("should be tiny. Both, per cell.")
+    print("R_t is printed in scientific notation and in bits: a .round() renders")
+    print("1e-11 as 0.0000, which hides exactly the quantity being reported.\n")
+    print("| model | fmt | arm | R median [IQR] | -log2 R | H_post | ceiling | frac |")
+    print("|" + "---|" * 8)
+    for (m, f, a), g in d.groupby(["model", "fmt", "arm"]):
+        r = g["R"].to_numpy(float)
+        med, q1, q3 = np.nanmedian(r), np.nanpercentile(r, 25), np.nanpercentile(r, 75)
+        bits = float(np.nanmedian(g["R_bits"]))
+        ceil = float(np.log2(max(g["n_allowed"].median(), 1)))
+        hp = float(g["H_post"].mean())
+        print(f"| {m} | {f} | {a} | {med:.3e} [{q1:.1e}, {q3:.1e}] | {bits:.1f} | "
+              f"{hp:.3f} | {ceil:.3f} | {hp / ceil:.3f} |")
+
+    # Did the log-space recollection actually take? The old probability-space
+    # path could not express more than 39.86 bits, so anything above that is
+    # proof the new code ran, and anything exactly AT it is proof it did not.
+    ceiling_bits = 39.86
+    worst = float(d["R_bits"].max())
+    n_at = int((d["R_bits"] >= ceiling_bits - 0.01).sum())
+    print(f"\nmax -log2 R observed: {worst:.2f} bits   (old clamp ceiling {ceiling_bits})")
+    if worst > ceiling_bits:
+        print("  -> above the old ceiling, so the log-space path is live and these")
+        print("     masses were previously censored.")
+    elif n_at:
+        print(f"  -> {n_at} rows sitting AT the old ceiling. The log-space path did")
+        print("     NOT run: check git pull and delete src/abstention/__pycache__.")
+    else:
+        print("  -> below the old ceiling, so nothing here was ever censored and")
+        print("     the recollection was belt-and-braces for this regime.")
 
     print("\n" + "=" * 78)
     print(f"VERDICT, marginal test (H_pre and H_post separately): "

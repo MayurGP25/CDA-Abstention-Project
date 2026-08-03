@@ -45,7 +45,7 @@ def main():
     args = ap.parse_args()
 
     only = set(args.only.split(",")) if args.only else None
-    df = load_all(Path(args.cache), args.refresh or bool(only), only)
+    df = load_all(Path(args.cache), args.refresh, only)
     d = df[(df["pos"] == 0) & (df["grammar"] == "forced_steps")].copy()
     d = d.drop_duplicates(subset=["model", "fmt", "grammar", "arm", "prompt_id"])
 
