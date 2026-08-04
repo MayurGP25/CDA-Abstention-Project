@@ -132,7 +132,7 @@ def compute_metrics(
     # H_post = served uncertainty after the grammar masks the support.
     #
     # Note H_post <= log2(n_allowed), a bound the GRAMMAR AUTHOR sets, not the
-    # model: 0 bits at a literal position, log2(90)=6.5 bits at the verb slot.
+    # model: 0 bits at a literal position, log2(25)=4.6 bits at the verb slot.
     # That is why output-side entropy carries no information about latent
     # preference -- see paper Discussion.
     # clamp_min(0): at a single-token position p_con is exactly 1.0 and p*log(p)

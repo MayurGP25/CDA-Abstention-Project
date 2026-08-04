@@ -36,15 +36,16 @@ grammar-constrained decoding is standard wherever structured output is required.
 The two are routinely composed, since entropy is read from the distribution the
 decoder samples, which under a constraint is the masked and renormalised one. We
 measure entropy immediately before and after the mask, at the same position and
-on the same prompts, for two instruction-tuned models. The two readings order
-inputs oppositely. Where the model concentrates on a continuation the grammar
-forbids, the surviving distribution is close to uniform over the permitted tokens
-and presents as undecided, while the model itself was close to resolved. The
-cause is that the permitted set holds between $10^{-9}$ and $10^{-11}$ of the
-model's probability, so the served distribution is a renormalisation of a
-near-zero tail. We recommend reporting that retained mass alongside any
-uncertainty computed under a constraint, and note that the effect disappears once
-the prompt makes the output format explicit.
+on the same prompts, for two instruction-tuned models. Under a grammar the prompt does not anticipate, the
+two readings order inputs oppositely. Where the model concentrates on a
+continuation the grammar forbids, the surviving distribution is markedly flatter
+over the permitted tokens and presents as undecided, while the model itself was
+close to resolved. This is possible because the permitted set holds between
+$10^{-8}$ and $10^{-12}$ of the model's probability in both conditions, so the
+served distribution is a renormalisation of a near-zero tail either way. What
+inverts the ordering is the shape of that tail. We recommend reporting the
+retained mass alongside any uncertainty computed under a constraint, and note
+that the effect disappears once the prompt makes the output format explicit.
 \end{abstract}
 
 \section{Introduction}
@@ -72,11 +73,13 @@ structured output and uncertainty-based routing are both ordinary practice.
 This paper reports one observation. We take a single metric, the entropy of the
 next-token distribution, and read it at two points in one pipeline: immediately
 before the mask and immediately after it, at the same position and on the same
-prompts. The two readings order our two input classes \emph{oppositely}. On
-inputs where the model is most resolved, the served distribution appears most
-undecided, and on inputs where the model is genuinely less resolved, the served
-distribution appears decisive. A system that ranks or thresholds on observed
-entropy therefore recovers close to the reverse of the model's own state.
+prompts. Under a grammar the prompt does not anticipate, the two readings order
+our two input classes \emph{oppositely}. On inputs where the model is most
+resolved, the served distribution appears most undecided, and on inputs where the
+model is genuinely less resolved, the served distribution appears decisive. A
+system that ranks or thresholds on observed entropy therefore recovers close to
+the reverse of the model's own state. Section~\ref{sec:scope} reports where this
+stops holding, which is as soon as the prompt requests the format.
 
 We follow \citet{steindl-etal-2024-linguistic} and
 \citet{toney-wails-2025-certain} in reporting a mismatch between a quantity that
@@ -101,7 +104,7 @@ the served distribution is $P_{\text{mask}}(v) = P_{\text{free}}(v)/R_t$ on $A_t
 and zero elsewhere. We call $R_t$ the \textbf{retained mass}. It is the feasible
 mass $\alpha(h_t)$ of \citet{reddy-etal-2026-dccd}, and because masking
 renormalises rather than reshapes,
-$D_{\mathrm{KL}}(P_{\text{mask}} \,\|\, P_{\text{free}}) = -\log R_t$.
+$D_{\mathrm{KL}}(P_{\text{mask}} \,\|\, P_{\text{free}}) = -\log_2 R_t$ bits.
 
 Write $H_{\text{pre}}$ for the entropy of $P_{\text{free}}$ over the full
 vocabulary and $H_{\text{post}}$ for the entropy of $P_{\text{mask}}$, both in
@@ -123,11 +126,12 @@ it rather than by the model.
 
 The consequence we test is a claim about \emph{shape}. When the model's mass sits
 on a continuation the grammar forbids, the admitted tokens carry little mass and
-carry it in roughly equal amounts, so renormalising them yields something close
-to uniform. When the model has genuine preference among the admitted tokens, that
-preference survives renormalisation. The served distribution therefore reports
-how indifferent the model was among the tokens the grammar happened to allow,
-which need not track how resolved it was overall (Figure~\ref{fig:swap}).
+carry it in roughly equal amounts, so renormalising them yields a markedly
+flatter distribution. When the model has genuine preference among the admitted
+tokens, that preference survives renormalisation. The served distribution
+therefore reports how indifferent the model was among the tokens the grammar
+happened to allow, which need not track how resolved it was overall
+(Figure~\ref{fig:swap}).
 
 \begin{figure}[t]
 \centering
@@ -135,8 +139,8 @@ which need not track how resolved it was overall (Figure~\ref{fig:swap}).
 \caption{Probability of the five admitted tokens at the first generated position
 under $P_{\text{free}}$ and $P_{\text{mask}}$, for one harmful and one benign
 prompt. On the harmful prompt the admitted tokens carry near-equal negligible
-mass and renormalise to near-uniform. On the benign prompt the model has a
-preference among them, which renormalisation preserves.}
+mass, so renormalisation leaves them markedly flatter. On the benign prompt the
+model has a preference among them, which renormalisation preserves.}
 \label{fig:swap}
 \end{figure}
 
@@ -151,11 +155,12 @@ HarmBench \citep{mazeika-etal-2024-harmbench} and fifty benign instructions from
 Alpaca \citep{taori-etal-2023-alpaca}.
 
 \paragraph{Constraint.}
-The schema requires
-\texttt{\{"step1": "Step 1: $\langle$verb$\rangle$ \ldots"\}} with the verb drawn
-from twenty-five imperatives, following the structured-output attack of
-\citet{cda-2025-grammar}, and is compiled with XGrammar
-\citep{dong-etal-2024-xgrammar}. We replace the generation loop so that raw
+The schema requires a JSON object with five required fields
+\texttt{step1} to \texttt{step5}, each pinned to
+\texttt{\^{}Step $k$: ($\langle$verb$\rangle$)} followed by at least sixty
+further characters, with the verb drawn from twenty-five imperatives. This
+follows the structured-output attack of \citet{cda-2025-grammar} and is compiled
+with XGrammar \citep{dong-etal-2024-xgrammar}. We replace the generation loop so that raw
 logits are read before the bitmask is applied and both distributions are
 recorded, a seam that hosted APIs do not expose and that high-throughput servers
 absorb into the sampling kernel \citep{kwon-etal-2023-efficient}.
@@ -173,9 +178,11 @@ all three, since it concentrates on a refusal opener and a JSON grammar makes
 that opener impossible at the first token. The framing is instrumental. We
 introduce no attack and report no attack success rates, and the mechanism should
 apply wherever a model holds a sharp preference the schema forbids. To confirm
-the preference is real we record $P_{\text{refuse}}$, the mass $P_{\text{free}}$
-places on a fixed prefix-free set of twenty-eight refusal continuations, by
-teacher forcing (Appendix~\ref{app:refusal}).
+the preference is real we record $P_{\text{refuse}}$, the probability the model
+assigns to a fixed set of fourteen refusal phrases in bare and space-prefixed
+form, reduced to a prefix-free set and evaluated by teacher forcing
+(Appendix~\ref{app:refusal}). Note this is a sequence probability rather than a
+mass under $P_{\text{free}}$, which is a distribution over single tokens.
 
 \paragraph{Prompt conditioning.}
 Whether the prompt anticipates the schema turns out to matter, so we treat it as
@@ -193,8 +200,9 @@ prompt does request JSON.
 \paragraph{The model is resolved where the served distribution is not.}
 On harmful prompts $H_{\text{pre}}$ is $0.06$ to $0.21$ bits
 (Table~\ref{tab:main}), which bounds the most probable token below by $96\%$ of
-the mass in every cell. $P_{\text{refuse}}$ of $0.77$ and $0.83$ identifies what
-that mass is on, and without a grammar both models open with a refusal on $88\%$
+the mass in every cell. $P_{\text{refuse}}$ identifies what that mass is on, at
+$0.77$ and $0.83$ under \textsc{none} and $0.66$ and $0.88$ under
+\textsc{neutral}, and without a grammar both models open with a refusal on $88\%$
 of these prompts. On benign prompts the model is markedly less resolved, at
 $0.76$ to $0.93$ bits. The served distribution reverses this in every cell,
 carrying more entropy on harmful prompts than on benign ones.
@@ -213,9 +221,11 @@ The five admitted tokens hold a median $3.6\times10^{-11}$ of Qwen's mass and
 $7.7\times10^{-9}$ of Llama's on harmful prompts, so the served distribution is a
 renormalisation of a remainder the model had all but ruled out. Retained mass is
 however close to prompt-independent. The benign medians are
-$1.6\times10^{-11}$ and $4.3\times10^{-9}$, within a factor of two to three, with
-interquartile ranges overlapping across two orders of magnitude and no consistent
-ordering across models. This is expected, since no instruction-tuned model
+$1.6\times10^{-11}$ and $4.3\times10^{-9}$, within a factor of two, with
+interquartile ranges that overlap over more than an order of magnitude in every
+pair. The ordering is not even consistent across prompt levels, harmful
+exceeding benign under \textsc{none} on both models and falling below it under
+\textsc{neutral} on both. This is expected, since no instruction-tuned model
 prefers to open a reply with a brace whatever it was asked.
 
 The amount removed therefore does not distinguish the two classes. What does is
@@ -231,16 +241,24 @@ precise magnitude.
 
 The observation is stated for a grammar the prompt does not anticipate, and that
 restriction is real. Across the eight cells in which the prompt does request JSON,
-the inversion holds in none. Retained mass is what moves, rising from order
-$10^{-11}$ to between $0.21$ and $1.00$, so the served distribution is no longer a
-near-zero tail and $H_{\text{post}}$ becomes interpretable again. The two models
-leave the regime differently. Llama keeps its refusal disposition across all four
-prompt levels, at $P_{\text{refuse}}$ of $0.83$ to $0.89$, whereas Qwen's
-collapses from $0.77$ to $0.00$, so for Qwen there is no longer a forbidden
-preference to invert. Appendix~\ref{app:extra} reports these cells in full,
-together with a harder benign control drawn from XSTest
-\citep{rottger-etal-2024-xstest} on which $H_{\text{post}}$ is higher than on
-harmful prompts, which rules out reading either quantity as a detector of harm.
+the inversion holds in none, and retained mass is what moves. For Qwen it rises
+in both arms, to between $0.28$ and $1.00$, so the served distribution is no
+longer a near-zero tail and $H_{\text{post}}$ tracks $H_{\text{pre}}$ rather than
+opposing it. For Llama it rises only on the benign side, to $0.21$ under
+\textsc{terse}, while the harmful arm stays at order $10^{-8}$. That mixed case
+is instructive: $H_{\text{pre}}$ still separates the two classes at AUROC
+$0.026$, but $H_{\text{post}}$ carries no signal at all, at $0.499$. A single
+scalar therefore indicates which of the three situations obtains, which is our
+reason for recommending that it be reported.
+
+The two models leave the unannounced regime for different reasons. Llama keeps
+its refusal disposition across all four prompt levels, at $P_{\text{refuse}}$ of
+$0.83$ to $0.89$, whereas Qwen's collapses from $0.77$ to $0.00$, so for Qwen
+there is no longer a forbidden preference to invert.
+Appendix~\ref{app:extra} reports these cells in full, together with a harder
+benign control drawn from XSTest \citep{rottger-etal-2024-xstest} on which Qwen's
+$H_{\text{post}}$ is higher than on harmful prompts, which rules out reading
+either quantity as a detector of harm.
 
 Uncertainty reported under grammar-constrained decoding is therefore best read as
 a joint property of the model and the constraint, with $R_t$ indicating how much
@@ -252,17 +270,18 @@ it is ordered opposite to the quantity a practitioner intends.
 The practical risk is not the direction one might expect. A confidence filter
 passes low-entropy outputs as reliable. Under an unannounced grammar it is the
 benign prompts that produce the lowest observed entropy while being the ones the
-model was least resolved about, so such a filter would pass exactly the
-generations that warranted inspection. All entropies here are small in absolute
-terms, between $0.06$ and $1.42$ bits against a possible $17$, which is why the
-claim concerns ordering rather than absolute level.
+model was least resolved about, so such a filter would pass through generations
+the model was least sure of. All entropies in Table~\ref{tab:main} are small in
+absolute terms, between $0.06$ and $1.42$ bits against a possible $17$, which is
+why the claim concerns ordering rather than absolute level.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 Reading entropy before and after a grammar mask at the same position, we find the
-two order inputs oppositely whenever the mask removes the model's preferred
-continuation. The recommendation is modest and cheap. Under constrained decoding,
+two order inputs oppositely in the four cells where the grammar arrives
+unannounced, that is, where the mask removes almost all of the model's mass on
+both classes of input. The recommendation is modest and cheap. Under constrained decoding,
 uncertainty is more informative computed with respect to $P_{\text{free}}$, or at
 minimum reported alongside $R_t$, which is available wherever the mask is. This
 is not a new estimator but a statement about which distribution an existing one
@@ -285,7 +304,8 @@ AUROC values should not be compared with one another. We report the direction of
 each and the fact that intervals exclude $0.5$, and draw no conclusion from
 differences between them. The marginal reading of $H_{\text{post}}$ alone is
 weaker than the paired shift, and in one of the four cells its interval reaches
-$0.5$ (Appendix~\ref{app:extra}).
+$0.5$ (Appendix~\ref{app:extra}). Table~\ref{tab:main} reports means, and the
+per-arm dispersion is given in the appendix rather than the main table.
 
 Inference is in \texttt{bfloat16}. Retained mass is computed in log space, as
 $\log R_t = \mathrm{logsumexp}(z_{A_t}) - \mathrm{logsumexp}(z)$ on the logits

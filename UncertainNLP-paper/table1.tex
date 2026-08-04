@@ -1,34 +1,39 @@
-% PLACEHOLDER. Regenerate from the artefacts before submitting:
+% PLACEHOLDER, holding the validated means. Regenerate from the artefacts with
 %     python3 experiments/paper_table.py --only fmt2
-% The standard deviations are the only numbers not yet measured, so they show as
-% -- here rather than being invented. Everything else is the validated value.
+% which adds the standard deviations. Those are the only numbers not yet
+% measured, so they are absent here rather than invented.
+%
+% Do not write this file through a shell heredoc. Doing so ate one level of
+% backslash, turning every `\\` row terminator into `\`, which detached the
+% header row and produced a "Misplaced \noalign" cascade at the first \midrule.
 \begin{table}[t]
 \centering
 \small
 \setlength{\tabcolsep}{3.5pt}
 \begin{tabular}{llrrrr}
 \toprule
-Level & Arm & $H_{\text{pre}}$ & $H_{\text{post}}$ & $\Delta H$ & $R_t$ \
+Level & Arm & $H_{\text{pre}}$ & $H_{\text{post}}$ & $\Delta H$ & $R_t$ \\
 \midrule
-\multicolumn{6}{l}{\emph{Qwen2.5-7B}} \
-\textsc{none}    & harmful & \textbf{0.07} & \textbf{1.26} & \textbf{$+1.18$} & $3.6{\times}10^{-11}$ \
-                 & benign  & 0.76 & 1.08 & $+0.33$ & $1.6{\times}10^{-11}$ \
-\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & \textbf{$+1.36$} & $7.4{\times}10^{-12}$ \
-                 & benign  & 0.81 & 1.06 & $+0.25$ & $9.5{\times}10^{-12}$ \
+\multicolumn{6}{l}{\emph{Qwen2.5-7B}} \\
+\textsc{none}    & harmful & \textbf{0.07} & \textbf{1.26} & $\mathbf{+1.18}$ & $3.6{\times}10^{-11}$ \\
+                 & benign  & 0.76 & 1.08 & $+0.33$ & $1.6{\times}10^{-11}$ \\
+\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & $\mathbf{+1.36}$ & $7.4{\times}10^{-12}$ \\
+                 & benign  & 0.81 & 1.06 & $+0.25$ & $9.5{\times}10^{-12}$ \\
 \midrule
-\multicolumn{6}{l}{\emph{Llama-3.1-8B}} \
-\textsc{none}    & harmful & \textbf{0.21} & \textbf{0.79} & \textbf{$+0.58$} & $7.7{\times}10^{-9}$ \
-                 & benign  & 0.93 & 0.58 & $-0.35$ & $4.3{\times}10^{-9}$ \
-\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & \textbf{$+0.85$} & $1.2{\times}10^{-9}$ \
-                 & benign  & 0.92 & 0.70 & $-0.23$ & $1.5{\times}10^{-9}$ \
+\multicolumn{6}{l}{\emph{Llama-3.1-8B}} \\
+\textsc{none}    & harmful & \textbf{0.21} & \textbf{0.79} & $\mathbf{+0.58}$ & $7.7{\times}10^{-9}$ \\
+                 & benign  & 0.93 & 0.58 & $-0.35$ & $4.3{\times}10^{-9}$ \\
+\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & $\mathbf{+0.85}$ & $1.2{\times}10^{-9}$ \\
+                 & benign  & 0.92 & 0.70 & $-0.23$ & $1.5{\times}10^{-9}$ \\
 \bottomrule
 \end{tabular}
-\caption{Entropy in bits at the first generated token, $n=50$ prompts per arm.
+\caption{Entropy in bits at the first generated token, means over $n=50$ prompts
+per arm.
 $\Delta H$ is the per-prompt shift $H_{\text{post}} - H_{\text{pre}}$. $R_t$ is
 the median retained mass. $|A_t| = 5$ throughout, so
 $H_{\text{post}} \le \log_2 5 = 2.32$. AUROC of $\Delta H$ separating the two
-arms is $0.856$ $[0.77, 0.92]$, $0.916$ $[0.86, 0.96]$, $0.845$ $[0.76, 0.92]$,
-$0.898$ $[0.83, 0.95]$ in row order. Note that $R_t$ barely differs between arms
-while the two entropies order them oppositely.}
+arms is $0.856$ $[0.77, 0.92]$, $0.916$ $[0.86, 0.96]$, $0.845$ $[0.76, 0.92]$
+and $0.898$ $[0.83, 0.95]$ in row order. Note that $R_t$ barely differs between
+arms while the two entropies order them oppositely.}
 \label{tab:main}
 \end{table}
