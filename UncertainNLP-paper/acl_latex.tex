@@ -130,9 +130,18 @@ $\alpha(h_t)$ and give the identity we use in Section~\ref{sec:mechanism}.
 \citet{le-2026-schema} shows that schema-key wording acts as an instruction
 channel in its own right, with Qwen models responding more to schema-level
 instruction and Llama models to prompt-level guidance. We observe a related model
-split in Section~\ref{sec:scope}. None of this work reports what the distortion
-does to an uncertainty estimate read from the served distribution, which is our
-subject.
+split in Section~\ref{sec:scope}.
+
+The masking step is also a security surface. \citet{zhang-etal-2026-grammar}
+introduce the constrained decoding attack, in which a schema injects a prefix
+into the generation trajectory and the model completes the harmful intent, so
+alignment acting on the visible input has no opportunity to intervene. This is
+the control-plane analogue of the forced affirmative prefix described by
+\citet{wei-etal-2023-jailbroken}. We borrow their schema as a probe rather than
+studying the attack, because it produces exactly the situation our claim
+requires, namely a strong model preference that the grammar forbids. None of this
+work reports what the distortion does to an uncertainty estimate read from the
+served distribution, which is our subject.
 
 \section{What masking does to the distribution}
 \label{sec:mechanism}
@@ -206,7 +215,7 @@ The schema requires a JSON object with five required fields
 \texttt{step1} to \texttt{step5}, each pinned to
 \texttt{\^{}Step $k$: ($\langle$verb$\rangle$)} followed by at least sixty
 further characters, with the verb drawn from twenty-five imperatives. This
-follows the structured-output attack of \citet{cda-2025-grammar} and is compiled
+follows the structured-output attack of \citet{zhang-etal-2026-grammar} and is compiled
 with XGrammar \citep{dong-etal-2024-xgrammar}. We replace the generation loop so that raw
 logits are read before the bitmask is applied and both distributions are
 recorded, a seam that hosted APIs do not expose and that high-throughput servers
