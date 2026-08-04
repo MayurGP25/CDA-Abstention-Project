@@ -51,41 +51,88 @@ that the effect disappears once the prompt makes the output format explicit.
 \section{Introduction}
 \label{sec:intro}
 
-Predictive uncertainty for language models is generally derived from the
-distribution over next tokens that the model exposes, through its entropy or a
-monotone function of it
-\citep{malinin-gales-2021-uncertainty,kuhn-etal-2023-semantic,liu-etal-2025-uncertainty}.
-\citet{durai-2025-phases}, for instance, tracks confidence as
-$D_{\mathrm{KL}}(p \,\|\, u) = \log|V| - H(p)$. This is sound whenever the
-distribution a system uses for generation is the distribution the model computed.
+Autoregressive language models increasingly sit inside pipelines that require
+machine-readable output, and structured generation has become the standard way to
+obtain it \citep{geng-etal-2023-grammar,willard-louf-2023-efficient,dong-etal-2024-xgrammar}.
+Yet the same pipelines routinely gate on a confidence signal, whether to abstain,
+to escalate a query to a larger model, or to flag a possible hallucination
+\citep{fadeeva-etal-2024-fact,gupta-etal-2024-cascades}. These two practices meet
+at a point that has not been examined. Grammar-constrained decoding guarantees
+schema conformance by masking the tokens that would violate it at each step and
+renormalising over what survives, so the distribution a downstream consumer can
+observe is not the distribution the model computed but its restriction to the
+admitted set.
 
-Grammar-constrained decoding breaks that identity. To guarantee that output
-conforms to a schema, the decoder computes a per-token mask at each step, sets
-the logits of violating tokens to $-\infty$, and renormalises over what remains
-\citep{willard-louf-2023-efficient,dong-etal-2024-xgrammar}. The distribution
-that then selects the next token, and that any downstream consumer can observe,
-is not the model's distribution but its restriction to the admitted set. That
-this restriction distorts the distribution is known and motivates grammar-aligned
-decoding \citep{park-etal-2024-grammar,reddy-etal-2026-dccd}. What it does to
-uncertainty computed downstream of it has received less attention, although
-structured output and uncertainty-based routing are both ordinary practice.
+Uncertainty estimation offers a way to attach confidence to a prediction, through
+the entropy of the next-token distribution, the probability of the selected
+token, or the spread of sampled continuations
+\citep{malinin-gales-2021-uncertainty,kuhn-etal-2023-semantic,baan-etal-2023-uncertainty}.
+Most of this work, however, evaluates a distribution the model produced directly.
+Work on constrained decoding, for its part, is aware that the restriction
+distorts what is sampled, and proposes corrections for it
+\citep{park-etal-2024-grammar,reddy-etal-2026-dccd}. What is less well understood
+is what that distortion does to an uncertainty estimate computed downstream of
+it, which is the quantity a deployed system actually reads.
 
-This paper reports one observation. We take a single metric, the entropy of the
-next-token distribution, and read it at two points in one pipeline: immediately
-before the mask and immediately after it, at the same position and on the same
-prompts. Under a grammar the prompt does not anticipate, the two readings order
-our two input classes \emph{oppositely}. On inputs where the model is most
-resolved, the served distribution appears most undecided, and on inputs where the
-model is genuinely less resolved, the served distribution appears decisive. A
-system that ranks or thresholds on observed entropy therefore recovers close to
-the reverse of the model's own state. Section~\ref{sec:scope} reports where this
-stops holding, which is as soon as the prompt requests the format.
+Our key finding is that, under a grammar the prompt does not anticipate, entropy
+measured before and after the mask orders inputs in opposite directions. In this
+work we take a single metric, the entropy of the next-token distribution, and
+read it at two points in one pipeline, immediately before the mask and
+immediately after it, at the same position and on the same prompts. On inputs
+where the model is most resolved the served distribution appears most undecided,
+and on inputs where the model is genuinely less resolved it appears decisive, so
+a system that ranks or thresholds on observed entropy recovers close to the
+reverse of the model's own state. We attribute this to the retained mass, the
+fraction of the model's probability the grammar admits, and recommend reporting
+it alongside any uncertainty computed under a constraint.
 
-We follow \citet{steindl-etal-2024-linguistic} and
-\citet{toney-wails-2025-certain} in reporting a mismatch between a quantity that
-behaves like confidence and the thing it is taken to describe. Here the mismatch
-is introduced by a decoding-time transformation rather than by training or
-elicitation.
+\section{Related Work}
+\label{sec:related}
+
+Uncertainty quantification for language models spans token-level, sequence-level
+and semantic estimators, surveyed by \citet{liu-etal-2025-uncertainty} and
+\citet{shorinwa-etal-2025-survey} and benchmarked by
+\citet{vashurin-etal-2025-polygraph}. We work at the token level, where the
+entropy of the next-token distribution and the probability of the selected token
+are the standard cheap signals
+\citep{malinin-gales-2021-uncertainty,baan-etal-2023-uncertainty}. These are not
+only diagnostic. \citet{fadeeva-etal-2024-fact} use token-level uncertainty to
+flag unsupported claims and \citet{gupta-etal-2024-cascades} route between models
+in a cascade on it, so a sign error in the signal has operational consequences.
+Semantic methods such as semantic entropy \citep{kuhn-etal-2023-semantic} operate
+over sampled continuations rather than a single step. We measure at the token
+level because that is where the intervention we study takes place.
+
+A recurring theme at this workshop is that a reported probability need not
+correspond to the quantity a task requires.
+\citet{toney-wails-2025-certain} find token-level probabilities diverging from
+theoretical distributions in explicitly probabilistic scenarios, and
+\citet{lovering-etal-2025-language} report them uncalibrated in numeric contexts.
+\citet{durai-2025-phases} tracks confidence as
+$D_{\mathrm{KL}}(p \,\|\, u) = \log|V| - H(p)$, a monotone function of entropy,
+and finds a training phase in which confidence rises while calibration worsens.
+\citet{steindl-etal-2024-linguistic} relate predictive uncertainty to jailbreak
+success, measured at the sequence level over sampled responses. Our result is of
+this kind, with the mismatch introduced by a decoding-time transformation rather
+than by training, elicitation, or the task.
+
+Grammar-constrained decoding enforces a formal output structure without
+finetuning \citep{geng-etal-2023-grammar}, and efficient implementations are now
+standard serving infrastructure
+\citep{willard-louf-2023-efficient,dong-etal-2024-xgrammar}. Its distortion of the
+model's distribution is known. \citet{park-etal-2024-grammar} show the resulting
+distribution is not the model's conditional on the grammar and give an adaptive
+correction, \citet{beurer-kellner-etal-2024-guiding} show that misaligning subword
+vocabularies with the constraint impairs accuracy, and
+\citet{reddy-etal-2026-dccd} formalise the admitted mass as the feasible mass
+$\alpha(h_t)$ and give the identity we use in Section~\ref{sec:mechanism}.
+\citet{tam-etal-2024-speak} document a task cost for format restrictions, and
+\citet{le-2026-schema} shows that schema-key wording acts as an instruction
+channel in its own right, with Qwen models responding more to schema-level
+instruction and Llama models to prompt-level guidance. We observe a related model
+split in Section~\ref{sec:scope}. None of this work reports what the distortion
+does to an uncertainty estimate read from the served distribution, which is our
+subject.
 
 \section{What masking does to the distribution}
 \label{sec:mechanism}
