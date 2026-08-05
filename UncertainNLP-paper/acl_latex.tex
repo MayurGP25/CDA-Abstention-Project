@@ -37,11 +37,13 @@ routinely composed, because entropy is read off the distribution the decoder
 samples, and under a constraint that is the masked one. We read entropy at two
 points in the same pipeline, immediately before the mask and immediately after
 it, at the same position and on the same prompts. When the grammar arrives
-unannounced, the two readings can order inputs oppositely. On prompts where the
-model is most decided, the surviving distribution looks least decided. The mask
-removes the same amount of probability either way, between $10^{-8}$ and
-$10^{-12}$, so what reverses the ordering is the shape of what is left rather
-than how much was taken. The effect disappears once the prompt asks for the
+unannounced, the two readings order our two classes of input oppositely: on
+prompts where the model is most decided, the surviving distribution looks least
+decided. Within a class the readings are uncorrelated rather than inverted, so no
+sign flip recovers one from the other. The mask leaves only $10^{-8}$ to
+$10^{-12}$ of the model's mass, near-identically for both classes within each
+model, so what reverses the ordering is the shape of what is left rather than how
+much was taken. The effect disappears once the prompt asks for the
 format, which makes retained mass a usable indicator of when it applies. We
 recommend reporting retained probability mass alongside any uncertainty measured
 under constrained decoding.
@@ -214,7 +216,8 @@ The claim needs a preference that is strong, identifiable and structurally
 forbidden. A safety-aligned model given a harmful request supplies all three. The
 framing is instrumental: we introduce no attack, report no attack success rates,
 and expect the mechanism wherever a model holds a sharp preference the schema
-forbids. To check the preference is real we record $P_{\text{refuse}}$, the
+forbids. Released artefacts hold token identifiers and distributional statistics
+rather than decoded generations. To check the preference is real we record $P_{\text{refuse}}$, the
 probability the model assigns to fourteen refusal phrases in bare and
 space-prefixed form, reduced to a prefix-free set and scored by teacher forcing.
 Whether the prompt anticipates the schema turns out to matter, so we vary it.
@@ -232,7 +235,9 @@ sizes.
 \paragraph{The model is most settled where the masked distribution looks least
 settled.}
 On harmful prompts the model's own entropy runs $0.06$ to $0.21$ bits
-(Table~\ref{tab:main}). That forces the top token above $96\%$ of the mass.
+(Table~\ref{tab:main}). Entropy is minimised, for a given largest probability, by
+placing all remaining mass on a single token, so $0.21$ bits forces the most
+probable token above $96\%$ of the total.
 $P_{\text{refuse}}$ says what the mass is on, at $0.77$ and $0.83$ under
 \textsc{none}, and without a grammar both models open with a refusal on $88\%$ of
 these prompts. Benign prompts leave the model less settled, at $0.76$ to $0.93$
@@ -245,9 +250,10 @@ Table~\ref{tab:main}. The model's own entropy ranks harmful prompts below benign
 ones everywhere, at AUROC $0.125$ to $0.175$, every interval strictly under
 $0.5$. The served entropy ranks them above, at $0.613$ to $0.750$, with the
 interval excluding $0.5$ in three cells of four. The paired shift
-$\Delta H = H_{\text{post}} - H_{\text{pre}}$ summarises both and separates the
-arms at $0.845$ to $0.916$, better than either reading alone
-(Figure~\ref{fig:slope}).
+$\Delta H = H_{\text{post}} - H_{\text{pre}}$ summarises both in one per-prompt
+statistic and separates the arms at $0.845$ to $0.916$, comparable in magnitude
+to the model's own entropy read sign-flipped and clearly stronger than the served
+entropy alone (Figure~\ref{fig:slope}).
 
 \begin{figure}[t]
 \centering
@@ -325,7 +331,12 @@ since fused sampling kernels discard it first.
 
 We cover one grammar, one benchmark, fifty prompts per condition, two open-weight
 models and a single position, and deeper measurements show the effect does not
-survive many forced tokens. At $n\!=\!50$ individual AUROC values should not be
+survive many forced tokens. Our two classes also differ in $H_{\text{pre}}$ by
+construction, since one is chosen to elicit a refusal the model was trained to
+prefer, so the reversal is a property of this contrast rather than an estimate of
+how often it arises in deployment. The mechanism in Equation~\ref{eq:decomp} is
+general and the within-arm analysis uses no class labels, but the demonstration
+is a single instance. At $n\!=\!50$ individual AUROC values should not be
 compared, one of four served-entropy intervals touches $0.5$, and
 \texttt{bfloat16} inference makes retained masses orders of magnitude only.
 Closed-weight systems cannot be examined at all, since the method needs logits
