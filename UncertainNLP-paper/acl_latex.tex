@@ -94,17 +94,15 @@ can be trusted, and reporting it is our recommendation.
 \label{sec:related}
 
 Uncertainty quantification for language models spans token-level, sequence-level
-and semantic estimators, surveyed by \citet{liu-etal-2025-uncertainty} and
-\citet{shorinwa-etal-2025-survey} and benchmarked by
-\citet{vashurin-etal-2025-polygraph}. We work at the token level, where entropy
-and the probability of the selected token are the standard cheap signals
-\citep{malinin-gales-2021-uncertainty,baan-etal-2023-uncertainty}, and which is
-where the intervention we study takes place. These signals are not only
-diagnostic. \citet{fadeeva-etal-2024-fact} flag unsupported claims with them and
-\citet{gupta-etal-2024-cascades} route between models in a cascade on them, so a
-sign error has operational consequences. Semantic methods such as semantic
-entropy \citep{kuhn-etal-2023-semantic} instead aggregate over sampled
-continuations.
+and semantic estimators
+\citep{liu-etal-2025-uncertainty,shorinwa-etal-2025-survey,vashurin-etal-2025-polygraph}.
+We work at the token level, where entropy is the standard cheap signal
+\citep{malinin-gales-2021-uncertainty,baan-etal-2023-uncertainty} and where the
+intervention we study takes place, and where it is used operationally rather than
+only diagnostically: \citet{fadeeva-etal-2024-fact} flag unsupported claims with
+it and \citet{gupta-etal-2024-cascades} route model cascades on it, so a sign
+error has consequences. Semantic methods such as semantic entropy
+\citep{kuhn-etal-2023-semantic} instead aggregate over sampled continuations.
 
 A recurring theme at this workshop is that a reported probability need not
 correspond to the quantity a task requires.
@@ -363,6 +361,16 @@ misses, so we do not rest on it alone. The lexicon-free quantity agrees: Qwen's
 retained mass on harmful prompts under \textsc{schema} is $0.84$, meaning it is
 readily emitting the schema rather than being prevented from refusing.
 
+The reversal is also confined to the first token. In a separate run over
+thirty-two forced positions, by the point at which the schema pins an imperative
+verb, a median of twelve tokens in, the model has conditioned on a prefix it did
+not choose and its refusal mass has fallen from $0.77$ to $0.03$. Its own entropy
+on harmful prompts is by then \emph{higher} than on benign ones rather than
+lower, and the two readings agree again. This is the behaviour
+\citet{wei-etal-2023-jailbroken} describe for forced affirmative prefixes, and it
+means an entropy averaged over a whole structured response would dilute the
+effect rather than compound it.
+
 Neither quantity should be read as a detector of harm. On a harder benign control
 drawn from XSTest \citep{rottger-etal-2024-xstest}, whose prompts are lexically
 alarming but safe, Qwen's served entropy is $1.48$ bits against $1.26$ on
@@ -412,11 +420,14 @@ model's own distribution before anything can observe it.
 
 Our study covers one grammar family, one harmful benchmark, fifty prompts per
 condition, two open-weight models of comparable size, and a single decoding
-position. Whether the effect holds for other schema types, larger models, or
-positions deeper into a generation is open. Closed-weight systems cannot be
-examined this way at all, since the method requires logits before the constraint
-is applied, a restriction shared by probabilistic uncertainty measurement
-generally \citep{steindl-etal-2024-linguistic}.
+position. The last is a real restriction and we do not claim otherwise: our own
+deeper measurements show the effect does not survive many forced tokens, so this
+is a statement about the first token of a constrained generation and not about a
+response as a whole. Whether it holds for other schema types or larger models is
+open. Closed-weight systems cannot be examined this way at all, since the method
+requires logits before the constraint is applied, a restriction shared by
+probabilistic uncertainty measurement generally
+\citep{steindl-etal-2024-linguistic}.
 
 At fifty prompts per arm the bootstrap intervals are wide enough that individual
 AUROC values should not be compared with one another. We report the direction of
