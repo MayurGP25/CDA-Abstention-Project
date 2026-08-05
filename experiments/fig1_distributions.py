@@ -1,31 +1,27 @@
-"""Figure 1: the five admitted tokens before and after masking, for one harmful
-and one benign prompt.
+"""Figure 1: the five admitted tokens before and after masking, averaged over
+each arm.
 
-This is the paper's explanatory picture. On a typical harmful prompt the admitted
-tokens carry near-equal negligible mass, so renormalising them leaves an almost
-flat distribution and the served entropy is high. On a typical benign prompt the
-model has a real preference among the SAME five tokens, and renormalisation
-preserves it.
+AVERAGED, not a single pair, and the reason matters. Two earlier versions plotted
+one harmful and one benign prompt. The first picked index 0 and produced a figure
+whose benign post-mask entropy sat ABOVE the harmful one, the reverse of Table 1.
+The second picked the prompt nearest each arm's median, which fixed the direction
+but still showed two nearly identical panels, because a 0.1 bit gap between two
+single prompts is invisible.
 
-PROMPT SELECTION IS NOT ARBITRARY, and this matters. An earlier version took the
-first prompt of each arm, which produced a figure showing benign post-mask
-entropy ABOVE harmful, the reverse of the paper's claim and of Table 1. Single
-prompts vary. We therefore pick, from the already-collected measurements, the
-prompt in each arm whose post-mask entropy is closest to that arm's median, so
-the panel illustrates the typical case by construction. The script then checks
-the chosen pair reproduces the class ordering and refuses to write a figure that
-contradicts the table.
+The measured within-arm rank correlation between the two entropies is
+approximately zero, so an individual prompt carries almost no signal about the
+effect: it is a between-arm effect and only an average can show it. This script
+therefore runs every prompt in both arms and plots the mean post-mask probability
+per admitted token with its interquartile range across prompts.
 
-Needs a GPU, but only two forward passes.
+One forward pass per prompt, so a hundred in total at the default settings.
 
-    python3 experiments/fig2_slope.py --only fmt2      # populates the cache
-    GPU=7 python3 experiments/fig1_distributions.py --only fmt2
+    GPU=7 python3 experiments/fig1_distributions.py
 
 Writes UncertainNLP-paper/fig1_distributions.pdf.
 
-RESPONSIBLE USE. Nothing decoded from the harmful prompt is written to disk or
-drawn. The figure shows five JSON structural tokens and their probabilities, and
-the prompts are identified by benchmark id only.
+RESPONSIBLE USE. Nothing decoded from the harmful prompts is written to disk or
+drawn. The figure shows five JSON structural tokens and their probabilities.
 """
 from __future__ import annotations
 
@@ -70,7 +66,6 @@ from abstention import runner                            # noqa: E402
 from abstention.decode_loop import _bool_allowed         # noqa: E402
 from abstention.model_loader import encode_chat          # noqa: E402
 from abstention.prompting import build_messages          # noqa: E402
-from dump_all import load_all                            # noqa: E402
 step("imports done")
 
 C_HARM, C_BEN = "#B2182B", "#2166AC"
@@ -85,28 +80,6 @@ def token_label(i: int, t: str) -> str:
     the usual convention and needs no notation at all.
     """
     return "T%d" % (i + 1)
-
-
-def pick_representative(cache, only, model_key, fmt="none"):
-    """prompt_id per arm whose post-mask entropy is nearest that arm's median."""
-    df = load_all(Path(cache), False, set(only.split(",")) if only else None)
-    d = df[(df["pos"] == 0) & (df["fmt"] == fmt)
-           & (df["grammar"] == "forced_steps")
-           & (df["model"].str.contains(model_key, case=False))
-           & (df["condition"].isin(["harmful_forced", "benign_forced"]))
-           & (df["prompt_source"].isin(["harmbench", "alpaca"]))].copy()
-    d = d.drop_duplicates(subset=["condition", "prompt_id"])
-    out = {}
-    for cond in ("harmful_forced", "benign_forced"):
-        g = d[d["condition"] == cond]
-        if g.empty:
-            raise SystemExit("no %s rows for %s/%s in the cache" % (cond, model_key, fmt))
-        med = g["H_post"].median()
-        row = g.iloc[(g["H_post"] - med).abs().argsort().iloc[0]]
-        out[cond] = (str(row["prompt_id"]), float(row["H_pre"]), float(row["H_post"]))
-        print("  %-15s median H_post %.3f -> picked %s (H_pre %.3f, H_post %.3f)"
-              % (cond, med, row["prompt_id"], row["H_pre"], row["H_post"]))
-    return out
 
 
 @torch.no_grad()
@@ -139,96 +112,77 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="qwen25-7b")
     ap.add_argument("--bench", default="harmbench")
-    ap.add_argument("--only", default="fmt2", help="results/ subdirs for selection")
-    ap.add_argument("--cache", default=str(ROOT / "results" / "_dump_cache.parquet"))
-    ap.add_argument("--harmful-id", default=None, help="override the chosen prompt")
-    ap.add_argument("--benign-id", default=None)
-    ap.add_argument("--force", action="store_true",
-                    help="write the figure even if the pair contradicts Table 1")
+    ap.add_argument("--n", type=int, default=50, help="prompts per arm to average")
     ap.add_argument("--out", default=str(ROOT / "UncertainNLP-paper" / "fig1_distributions.pdf"))
     args = ap.parse_args()
 
-    step("selecting representative prompts from measured data")
-    key = "qwen" if "qwen" in args.model.lower() else "llama"
-    picks = pick_representative(args.cache, args.only, key)
-    want_h = args.harmful_id or picks["harmful_forced"][0]
-    want_b = args.benign_id or picks["benign_forced"][0]
-
-    # The long pause. Weights come off the shared cache, so this is minutes on a
-    # cold mount and seconds once the page cache is warm.
-    step("loading %s (this is the slow part, weights come off the shared cache)"
+    step("loading %s (weights come off the shared cache, so this is the slow part)"
          % args.model)
-    dev = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset, torch will pick>")
-    step("  CUDA_VISIBLE_DEVICES=%s" % dev)
+    step("  CUDA_VISIBLE_DEVICES=%s"
+         % os.environ.get("CUDA_VISIBLE_DEVICES", "<unset, torch will pick>"))
     lm, grammar, schema, exp_cfg, _ = runner.setup(args.model)
-    step("model loaded on %s" % getattr(lm, "device", "?"))
+    step("model loaded")
     fmt = runner.format_instruction(exp_cfg)
-    harmful = {p["id"]: p for p in runner.harmful_prompts(exp_cfg, args.bench)}
-    benign = {p["id"]: p for p in runner.benign_prompts(exp_cfg)}
-    for want, pool, name in ((want_h, harmful, "harmful"), (want_b, benign, "benign")):
-        if want not in pool:
-            raise SystemExit("%s id %r not in the prompt pool" % (name, want))
+    arms = (("harmful", runner.harmful_prompts(exp_cfg, args.bench)[:args.n], C_HARM),
+            ("benign", runner.benign_prompts(exp_cfg)[:args.n], C_BEN))
 
     panels = []
-    for label, p, colour in (("harmful", harmful[want_h], C_HARM),
-                             ("benign", benign[want_b], C_BEN)):
-        toks, pre, post, R, H_post = first_step(
-            lm, grammar, p["prompt"], schema, fmt)
-        panels.append((label, p["id"], toks, pre, post, R, H_post, colour))
-        print("\n%-8s id=%s" % (label, p["id"]))
-        print("  R_t = %.3e   H_post = %.3f" % (R, H_post))
-        print("  tokens: %s" % [(token_label(i, t), repr(t))
-                        for i, t in enumerate(toks)])
-        print("  post:   %s" % np.array2string(post, precision=3))
+    for label, prompts, colour in arms:
+        pres, posts, Hs, toks = [], [], [], None
+        for i, p in enumerate(prompts):
+            t, pre, post, R, H = first_step(lm, grammar, p["prompt"], schema, fmt)
+            toks = toks or t
+            pres.append(pre); posts.append(post); Hs.append(H)
+            if (i + 1) % 10 == 0:
+                step("  %s %d/%d" % (label, i + 1, len(prompts)))
+        pres, posts = np.array(pres), np.array(posts)
+        panels.append((label, toks, pres, posts, np.array(Hs), colour))
+        step("%s done: mean H_post %.3f over n=%d" % (label, np.mean(Hs), len(Hs)))
 
-    # A figure that shows benign above harmful would illustrate the reverse of
-    # the paper's claim. That happened with arbitrary index selection and is
-    # worth failing on rather than shipping.
-    h_post, b_post = panels[0][6], panels[1][6]
-    if h_post <= b_post and not args.force:
-        raise SystemExit(
-            "\nREFUSING TO WRITE: harmful H_post %.3f <= benign H_post %.3f, which\n"
-            "is the reverse of Table 1. Pick a different pair with --harmful-id /\n"
-            "--benign-id, or pass --force if you intend to show an atypical case."
-            % (h_post, b_post))
+    h_mean, b_mean = panels[0][4].mean(), panels[1][4].mean()
+    if h_mean <= b_mean:
+        raise SystemExit("REFUSING TO WRITE: harmful mean H_post %.3f <= benign %.3f, "
+                         "which contradicts Table 1." % (h_mean, b_mean))
 
-    fig, axes = plt.subplots(2, 2, figsize=(3.4, 2.9), sharex="col")
-    for row, (label, pid, toks, pre, post, R, H_post, colour) in enumerate(panels):
-        x = np.arange(len(toks))
-        names = [token_label(i, t) for i, t in enumerate(toks)]
+    fig, axes = plt.subplots(1, 2, figsize=(3.4, 1.9))
+    x = np.arange(len(panels[0][1]))
+    w = 0.38
+    for k, (label, toks, pres, posts, Hs, colour) in enumerate(panels):
+        off = (k - 0.5) * w
+        # Mean post-mask probability per admitted token, with the interquartile
+        # range across prompts. A single prompt cannot show a between-arm effect,
+        # which the near-zero within-arm rank correlation makes explicit, so the
+        # figure has to average.
+        m = posts.mean(0)
+        lo = m - np.percentile(posts, 25, axis=0)
+        hi = np.percentile(posts, 75, axis=0) - m
+        axes[1].bar(x + off, m, width=w, color=colour, label=label,
+                    yerr=np.vstack([np.clip(lo, 0, None), np.clip(hi, 0, None)]),
+                    error_kw=dict(lw=0.6, capsize=1.5, ecolor="0.35"))
+        axes[0].bar(x + off, np.clip(pres.mean(0), 1e-16, None), width=w,
+                    color=colour, label=label)
 
-        # Log axis before the mask: these masses span orders of magnitude and a
-        # linear axis renders every bar as zero.
-        ax = axes[row][0]
-        ax.bar(x, np.clip(pre, 1e-16, None), color=colour, width=0.62)
-        ax.set_yscale("log")
-        ax.set_ylim(1e-14, 1.0)
-        ax.set_ylabel("%s\np(token)" % label, fontsize=7)
-        ax.text(0.03, 0.90, "$R_t$=%.0e" % R, transform=ax.transAxes,
-                ha="left", va="top", fontsize=6.5)
-        if row == 0:
-            ax.set_title("before mask", fontsize=8)
-
-        ax = axes[row][1]
-        ax.bar(x, post, color=colour, width=0.62)
-        ax.set_ylim(0, 1.0)
-        ax.text(0.97, 0.90, "$H$=%.2f" % H_post, transform=ax.transAxes,
-                ha="right", va="top", fontsize=6.5)
-        if row == 0:
-            ax.set_title("after mask", fontsize=8)
-
-        for ax in axes[row]:
-            ax.set_xticks(x)
-            ax.set_xticklabels(names, fontsize=6.5)
-            ax.tick_params(labelsize=6)
-            for s in ("top", "right"):
-                ax.spines[s].set_visible(False)
-
+    axes[0].set_yscale("log"); axes[0].set_ylim(1e-14, 1.0)
+    axes[0].set_title("before mask", fontsize=8)
+    axes[0].set_ylabel("p(token)", fontsize=7)
+    axes[1].set_ylim(0, 1.0)
+    axes[1].set_title("after mask", fontsize=8)
+    axes[1].text(0.97, 0.95, "$H$: %.2f vs %.2f" % (h_mean, b_mean),
+                 transform=axes[1].transAxes, ha="right", va="top", fontsize=6.5)
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(["T%d" % (i + 1) for i in x], fontsize=6.5)
+        ax.tick_params(labelsize=6)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    axes[1].legend(fontsize=6.5, frameon=False, loc="upper left")
     fig.tight_layout()
+
     out = Path(args.out)
     fig.savefig(out, bbox_inches="tight")
-    print("\nwrote %s" % out)
-    print("Caption should name the two ids: harmful %s, benign %s" % (want_h, want_b))
+    step("wrote %s" % out)
+    for label, toks, pres, posts, Hs, colour in panels:
+        print("  %-8s mean post-mask p: %s" % (label, np.array2string(posts.mean(0), precision=3)))
 
 
 if __name__ == "__main__":

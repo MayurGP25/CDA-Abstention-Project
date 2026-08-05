@@ -1,7 +1,3 @@
-% PLACEHOLDER, holding the validated values. Regenerate with
-%     python3 experiments/paper_table.py --only fmt2
-% Do not edit through a shell heredoc: it collapses `\\` to `\`, which detaches
-% the header row and gives a "Misplaced \noalign" cascade at the first \midrule.
 \begin{table}[t]
 \centering
 \small
@@ -12,34 +8,25 @@
 Level & Arm & entropy & entropy & $\Delta H$ & $R_t$ \\
 \midrule
 \multicolumn{6}{l}{\emph{Qwen2.5-7B}} \\
-\textsc{none}    & harmful & \textbf{0.07} & \textbf{1.26} & $\mathbf{+1.18}$ & \textbf{34.7} \\
-                 & benign  & 0.76 & 1.08 & $+0.33$ & 35.9 \\
-\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & $\mathbf{+1.36}$ & \textbf{37.0} \\
-                 & benign  & 0.81 & 1.06 & $+0.25$ & 36.6 \\
+\textsc{none} & harmful & \textbf{0.07} & \textbf{1.26} & \textbf{$+1.18$} & \textbf{34.7} \\
+ & benign & 0.76 & 1.08 & $+0.32$ & 35.9 \\
+\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & \textbf{$+1.36$} & \textbf{37.0} \\
+ & benign & 0.81 & 1.06 & $+0.25$ & 36.6 \\
 \midrule
 \multicolumn{6}{l}{\emph{Llama-3.1-8B}} \\
-\textsc{none}    & harmful & \textbf{0.21} & \textbf{0.79} & $\mathbf{+0.58}$ & \textbf{26.9} \\
-                 & benign  & 0.93 & 0.58 & $-0.35$ & 27.8 \\
-\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & $\mathbf{+0.85}$ & \textbf{29.6} \\
-                 & benign  & 0.92 & 0.70 & $-0.23$ & 29.4 \\
+\textsc{none} & harmful & \textbf{0.21} & \textbf{0.79} & \textbf{$+0.58$} & \textbf{26.9} \\
+ & benign & 0.93 & 0.58 & $-0.35$ & 27.8 \\
+\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & \textbf{$+0.85$} & \textbf{29.6} \\
+ & benign & 0.92 & 0.70 & $-0.23$ & 29.4 \\
 \midrule
 \multicolumn{6}{l}{\emph{AUROC, harmful against benign}} \\
 \midrule
-Qwen2.5-7B & \textsc{none}    & 0.158 & 0.613 & \textbf{0.856} & \\
-Qwen2.5-7B & \textsc{neutral} & 0.157 & 0.750 & \textbf{0.916} & \\
-Llama-3.1-8B & \textsc{none}    & 0.175 & 0.690 & \textbf{0.845} & \\
-Llama-3.1-8B & \textsc{neutral} & 0.125 & 0.728 & \textbf{0.898} & \\
+Qwen2.5-7B & \textsc{none} & 0.158 & 0.613 & \textbf{0.856} &  \\
+Qwen2.5-7B & \textsc{neutral} & 0.157 & 0.750 & \textbf{0.916} &  \\
+Llama-3.1-8B & \textsc{none} & 0.175 & 0.690 & \textbf{0.845} &  \\
+Llama-3.1-8B & \textsc{neutral} & 0.125 & 0.728 & \textbf{0.898} &  \\
 \bottomrule
 \end{tabular}
-\caption{Entropy in bits at the first generated token, means over $n\!=\!50$
-prompts per arm, with $-\log_2 R_t$ as the median. $\Delta H = H_{\text{post}} -
-H_{\text{pre}}$ is the per-prompt shift, paired within a prompt. It is a summary
-rather than a physical quantity, since the two entropies live on different
-supports. $-\log_2 R_t$ is the divergence of the served distribution from the
-model's own in bits, and larger means less of the model's probability survives
-the mask. $|A_t| = 5$ throughout, so the post-mask entropy cannot exceed
-$\log_2 5 = 2.32$. In the lower panel the pre-mask column lies below $0.5$ and
-the post-mask column above it in every cell, which is the reversal. Intervals are
-given in the text.}
+\caption{Entropy in bits at the first generated token, means over $n\!=\!50$ prompts per arm, with $-\log_2 R_t$ as the median. $\Delta H = H_{\text{post}} - H_{\text{pre}}$ is the per-prompt shift, paired within a prompt. It is a summary rather than a physical quantity, since the two entropies live on different supports. $-\log_2 R_t$ is the divergence of the served distribution from the model's own in bits, and larger means less of the model's probability survives the mask. $|A_t| = 5$ throughout, so the post-mask entropy cannot exceed $\log_2 5 = 2.32$. In the lower panel the pre-mask column lies below $0.5$ and the post-mask column above it in every cell, which is the reversal. Intervals are given in the text.}
 \label{tab:main}
 \end{table}

@@ -197,16 +197,16 @@ need not track how resolved it was overall (Figure~\ref{fig:swap}).
   {\includegraphics[width=\columnwidth]{fig1_distributions.pdf}}
   {\framebox[0.95\columnwidth]{\rule{0pt}{3.6cm}\textsc{[Figure 1: run experiments/fig1\_distributions.py]}}}
 \caption{Probability of the five admitted tokens at the first generated position,
-before and after masking, for one harmful and one benign prompt on Qwen2.5-7B
-under \textsc{none}. The admitted tokens are the JSON opening brace and
-whitespace variants: T1 is \texttt{\{}, T4 is \texttt{\{"}, and T2, T3 and T5 are
-\texttt{\{} followed by one, two and three newlines. Each prompt is the one whose
-post-mask entropy is closest to its arm's median, so the panels show the typical
-case rather than a hand-picked one. The left axis is logarithmic. On the harmful
-prompt the admitted tokens carry near-equal negligible mass, so renormalisation
-leaves them almost flat and the served entropy is high. On the benign prompt the
-model has a real preference among the same five tokens, which renormalisation
-preserves.}
+before and after masking, averaged over all fifty prompts in each arm on
+Qwen2.5-7B under \textsc{none}. The admitted tokens are the JSON opening brace
+and whitespace variants: T1 is \texttt{\{}, T4 is \texttt{\{"}, and T2, T3 and T5
+are \texttt{\{} followed by one, two and three newlines. Bars are means and
+whiskers the interquartile range across prompts. The left axis is logarithmic.
+Before the mask both arms sit ten to twelve orders of magnitude below one. After
+it, the harmful arm spreads its mass more evenly across the admitted tokens than
+the benign arm does, which is the difference in served entropy. The averaging is
+necessary rather than cosmetic, since the two entropies are close to uncorrelated
+within an arm and no single prompt exhibits the effect.}
 \label{fig:swap}
 \end{figure}
 
@@ -291,12 +291,17 @@ supports, $\log_2|V| \approx 17$ bits against $\log_2 5$, we treat $\Delta H$ as
 convenient per-prompt summary rather than a physical quantity, and the claim
 remains one about ordering within each reading.
 
-Rank correlation makes the same point without reference to the two classes.
-Pooled over both arms the two entropies correlate at Spearman
-$\rho = \textbf{[POOL]}$, and computed within the harmful and benign arms
-separately at $\textbf{[HARM]}$ and $\textbf{[BEN]}$. A pooled coefficient
-over two clusters largely restates the separation above, so the within-arm values
-are the ones that speak to a prompt-by-prompt reversal.
+\paragraph{The reversal is between the two classes, not prompt by prompt.}
+Rank correlation places a useful limit on what we claim. Pooled over both arms
+the two entropies correlate at Spearman $\rho$ between $-0.13$ and $-0.27$, which
+is weak, and a pooled coefficient over two clusters largely restates the
+separation above in any case. Computed \emph{within} each arm the correlation is
+essentially absent, between $-0.27$ and $+0.17$ with every interval containing
+zero. Masking therefore does not reverse the ordering of individual prompts so
+much as discard it: knowing the model's entropy on a given prompt says little
+about the entropy that will be served for it. What reverses is the ordering of
+the two populations, which is what Table~\ref{tab:main} reports and what a
+threshold rule would act on.
 
 \begin{figure}[t]
 \centering
@@ -314,8 +319,8 @@ does.}
 The five admitted tokens hold $34.7$ bits less of Qwen's probability than the full
 vocabulary does, and $26.9$ bits less of Llama's, so the served distribution is a
 renormalisation of a remainder the model had all but ruled out. Retained mass is
-however close to prompt-independent. It separates the two arms at AUROC
-$\textbf{[AUROC-R]}$, an interval containing $0.5$ in every cell, with medians
+however close to prompt-independent. It separates the two arms at AUROC $0.46$ to
+$0.56$, an interval containing $0.5$ in every one of the four cells, with medians
 within a factor of two of each other and an ordering that is not even consistent
 across prompt levels.
 
@@ -367,10 +372,13 @@ benign prompts that produce the lowest observed entropy while being the ones the
 model was least resolved about. A cascade that escalates on high observed entropy
 \citep{gupta-etal-2024-cascades} would escalate the cases the model had already
 settled and pass through the ones it had not. Taking the highest-entropy half of
-each cell as the escalation set, the two readings disagree about $\textbf{[D50]}$ of
-prompts, which is the concrete form of the reversal. The claim concerns ordering
-rather than absolute level, since every entropy here is small, between $0.06$ and
-$1.42$ bits against a possible $17$.
+each cell as the escalation set, the two readings disagree about $56$ to $62\%$
+of prompts, against the $50\%$ expected of two independent rankings. The excess
+is real but modest, which is the same conclusion the within-arm rank correlations
+reach: at the level of a single prompt the served entropy is closer to
+uninformative about the model's own than to opposed to it. The claim concerns
+ordering rather than absolute level, since every entropy here is small, between
+$0.06$ and $1.42$ bits against a possible $17$.
 
 Our recommendation is correspondingly modest. Uncertainty computed under a
 constraint is more informative taken with respect to the model's own

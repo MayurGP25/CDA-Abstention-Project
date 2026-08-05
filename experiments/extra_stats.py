@@ -158,19 +158,26 @@ def main():
     print("=" * 74)
     print("Top-k by served entropy against top-k by the model's own, at a matched")
     print("escalation rate over all 100 prompts in the cell.\n")
-    print("| model | fmt | rate | k | prompts routed differently |")
-    print("|" + "---|" * 5)
+    # The chance baseline is not optional. Two INDEPENDENT rankings already
+    # disagree about 2r(1-r) of prompts, which is 50% at r=0.5. Quoting a raw
+    # disagreement without it would invite the obvious question and lose.
+    print("| model | fmt | rate | chance | observed | excess |")
+    print("|" + "---|" * 6)
     for m, f in cells:
         g = d[(d["model"] == m) & (d["fmt"] == f)]
         if g.empty:
             continue
         for rate in (0.10, 0.20, 0.30, 0.50):
             frac, k = disagreement(g["H_pre"].to_numpy(), g["H_post"].to_numpy(), rate)
-            print("| %s | %s | %.0f%% | %d | %.0f%% |"
-                  % (SHORT[m], f, 100 * rate, k, 100 * frac))
-    print("\nQuote the 50%% row in the conclusion: at that rate the two readings")
-    print("disagree about a majority of prompts, which is the concrete form of")
-    print("the claim that the ordering is reversed.")
+            base = 2 * rate * (1 - rate)
+            print("| %s | %s | %.0f%% | %.0f%% | %.0f%% | %+.0f pts |"
+                  % (SHORT[m], f, 100 * rate, 100 * base, 100 * frac,
+                     100 * (frac - base)))
+    print("\nRead the excess column, not the observed one. A full reversal would")
+    print("push disagreement toward 100%, and independence gives 2r(1-r). An")
+    print("excess of a few points means the two readings are closer to")
+    print("independent than to opposed, which is what the within-arm rank")
+    print("correlations above already say.")
 
 
 if __name__ == "__main__":
