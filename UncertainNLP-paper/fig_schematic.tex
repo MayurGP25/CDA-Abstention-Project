@@ -1,0 +1,84 @@
+% Storytelling schematic for the introduction.
+%
+% Requires \usepackage{tikz} in the preamble. Include with \input{fig_schematic}.
+%
+% Reads left to right as a pipeline: the schema is compiled to a mask, the mask
+% deletes the continuation the model preferred, and a downstream monitor reads
+% entropy off what is left. The point of the figure is that the two entropy
+% readings disagree about the same prompt, so the monitor box at the end matters
+% as much as the bars do.
+%
+% Bars are illustrative, not measured. The caption says so.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  every node/.style={inner sep=1pt},
+  box/.style={draw, line width=0.4pt, rounded corners=1pt},
+  ax/.style={draw, line width=0.4pt},
+  arr/.style={-{Latex[length=1.6mm,width=1.2mm]}, line width=0.45pt},
+]
+\definecolor{cRed}{HTML}{B2182B}
+\definecolor{cBlue}{HTML}{2166AC}
+\definecolor{cBand}{HTML}{EDEDED}
+
+% ---------------------------------------------------------------- the schema
+\node[box, align=left, fill=white] (schema) at (0,0)
+  {\ttfamily\scriptsize
+   \{"step1": "Step 1: $\langle$verb$\rangle$ ...",\\
+   \phantom{\{}\ldots, "step5": "..."\}};
+\node[anchor=south] at (schema.north) {\textbf{schema}};
+
+\node[align=center] (compile) at (0,-1.05) {compiled to a per-token mask};
+\draw[arr] (schema.south) -- (compile.north);
+
+% -------------------------------------------------- panel 1: pre-mask, t = 0
+\def\px{-1.75}   \def\py{-3.55}   \def\pw{3.4}   \def\ph{1.55}
+\fill[cBand] (\px,\py) rectangle (\px+1.35,\py+\ph);
+\draw[ax] (\px,\py) rectangle (\px+\pw,\py+\ph);
+\node[anchor=south] at (\px+\pw/2,\py+\ph) {\textbf{what the model wants}};
+
+% the refusal the schema forbids
+\fill[cRed] (\px+0.20,\py) rectangle (\px+0.45,\py+1.30);
+\node[anchor=north, font=\tiny] at (\px+0.33,\py) {\ttfamily I cannot};
+% remaining forbidden tokens, negligible
+\foreach \i in {0,1,2} {
+  \fill[gray!55] (\px+0.65+0.22*\i,\py) rectangle (\px+0.78+0.22*\i,\py+0.05);
+}
+% the five the grammar admits, also negligible before renormalisation
+\foreach \i in {0,...,4} {
+  \fill[gray!55] (\px+1.50+0.32*\i,\py) rectangle (\px+1.68+0.32*\i,\py+0.045);
+}
+\node[anchor=north, font=\tiny] at (\px+0.67,\py-0.24) {forbidden};
+\node[anchor=north, font=\tiny] at (\px+2.35,\py-0.24) {admitted, {\ttfamily \{} {\ttfamily \{"} \ldots};
+\node[anchor=north east, font=\tiny] at (\px+\pw-0.06,\py+\ph-0.04) {$H=0.07$ bits};
+
+% ------------------------------------------------- panel 2: post-mask, served
+\def\qx{2.15}
+\draw[ax] (\qx,\py) rectangle (\qx+2.35,\py+\ph);
+\node[anchor=south] at (\qx+1.18,\py+\ph) {\textbf{what is served}};
+\foreach \i/\h in {0/0.80,1/0.74,2/0.76,3/0.70,4/0.75} {
+  \fill[cBlue] (\qx+0.22+0.42*\i,\py) rectangle (\qx+0.44+0.42*\i,\py+\h);
+}
+\node[anchor=north, font=\tiny] at (\qx+1.18,\py-0.24) {the five admitted tokens};
+\node[anchor=north east, font=\tiny] at (\qx+2.29,\py+\ph-0.04) {$H=1.26$ bits};
+
+\draw[arr] (\px+\pw+0.06,\py+\ph/2) -- node[above, font=\tiny, align=center]
+  {restrict\\renormalise} (\qx-0.06,\py+\ph/2);
+
+% ------------------------------------------------------ the downstream reader
+\node[box, align=center, fill=white] (mon) at (\qx+1.18,\py-1.15)
+  {confidence monitor\\reads $H=1.26$: \emph{uncertain}};
+\draw[arr] (\qx+1.18,\py-0.52) -- (mon.north);
+
+\node[align=center, font=\tiny] (verdict) at (\px+1.7,\py-1.15)
+  {the model had settled\\on a single continuation};
+\draw[arr, dashed] (\px+0.33,\py-0.52) -- (verdict.north);
+
+\end{tikzpicture}
+\caption{Schematic. The schema is compiled into a mask that deletes the
+continuation the model preferred, and what survives renormalises to something
+flat, so a monitor downstream reads high uncertainty from a model that had
+settled. Bars are illustrative.}
+\label{fig:schematic}
+\end{figure}
