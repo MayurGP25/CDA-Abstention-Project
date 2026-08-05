@@ -86,12 +86,19 @@ def main():
     # Lower panel. The reversal is stated far more crisply as one column below
     # 0.5 and another above it than as any single shift statistic, which is why
     # the marginal AUROCs are here and not only in the text.
+    #
+    # The model goes in a header row, not in column one. Putting "Llama-3.1-8B"
+    # in column one widened the whole tabular past the text column, because every
+    # other entry there is just a level name.
     L += [r"\midrule",
-          r"\multicolumn{6}{l}{\emph{AUROC, harmful against benign}} " + BS,
-          r"\midrule"]
+          r"\multicolumn{6}{l}{\emph{AUROC, harmful against benign}} " + BS]
+    last = None
     for short, fmt, a_dh, a_pre, a_post in aurocs:
+        if short != last:
+            L.append(r"\multicolumn{6}{l}{\emph{" + short + "}} " + BS)
+            last = short
         L.append(" & ".join([
-            short, LEVEL[fmt],
+            LEVEL[fmt], "",
             "%.3f" % a_pre[0], "%.3f" % a_post[0],
             r"\textbf{%.3f}" % a_dh[0], "",
         ]) + " " + BS)

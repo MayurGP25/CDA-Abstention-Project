@@ -57,37 +57,32 @@ guarantee the output parses
 Those same systems often gate on a confidence signal, either to abstain, to
 escalate a query, or to flag a possible hallucination
 \citep{fadeeva-etal-2024-fact,gupta-etal-2024-cascades}. Both practices are
-ordinary. Their interaction is not well understood.
-
-The reason it matters is mechanical. A grammar mask sets the logits of violating
-tokens to $-\infty$ and renormalises what remains, so the distribution a
-downstream component can observe is not the one the model produced. It is that
-distribution restricted to whatever the schema allows. Prior work knows this
-restriction distorts sampling and proposes corrections for it
+ordinary, and their interaction is not well understood. The reason it matters is
+mechanical. A grammar mask sets the logits of violating tokens to $-\infty$ and
+renormalises what remains, so the distribution a downstream component can observe
+is not the one the model produced. It is that distribution restricted to whatever
+the schema allows. Prior work knows this restriction distorts sampling and
+proposes corrections for it
 \citep{park-etal-2024-grammar,reddy-etal-2026-dccd}. Nobody has asked what it does
 to an uncertainty estimate computed afterwards.
 
-That question is the one we care about here, and it is a question for this
-community in particular. Entropy, perplexity and their monotone transforms are
-the instruments we use to decide when a model should be trusted. Our objective is
-to establish whether one of those instruments still measures what it is taken to
-measure after a decoding-time transformation, and if not, to give a cheap way of
-telling.
+That question is for this community in particular. Entropy, perplexity and their
+monotone transforms are the instruments we use to decide when a model should be
+trusted. Our objective is to establish whether one of them still measures what it
+is taken to measure after a decoding-time transformation, and if not, to give a
+cheap way of telling.
 
 We take a single metric, the entropy of the next-token distribution, and read it
 twice: once from the model's own distribution and once from the masked one, at
-the same position and on the same prompts. Our finding is that when the grammar
-arrives unannounced the two readings can order inputs oppositely. Prompts on
-which the model has all but settled produce the highest observed entropy. A
-system thresholding on what it can see therefore recovers close to the reverse of
-the model's own state.
-
-What drives this is not the volume of probability the mask removes. That is
-almost identical for the two kinds of input we compare. It is the shape of the
-small remainder that gets renormalised. Retained mass is consequently a useful
-diagnostic rather than an explanation: where it is vanishing, the served entropy
-describes the schema more than the model, and where it is not, the two readings
-agree again.
+the same position and on the same prompts. When the grammar arrives unannounced
+the two readings can order inputs oppositely. Prompts on which the model has all
+but settled produce the highest observed entropy, so a system thresholding on
+what it can see recovers close to the reverse of the model's own state. What
+drives this is not the volume of probability the mask removes, which is almost
+identical for the two kinds of input we compare, but the shape of the small
+remainder that gets renormalised. Retained mass is therefore a diagnostic rather
+than an explanation. Where it is vanishing, the served entropy describes the
+schema more than the model. Where it is not, the two readings agree again.
 
 \section{Related Work}
 \label{sec:related}
@@ -318,76 +313,23 @@ disposition, over-refusal included.
 \section{Conclusion}
 \label{sec:conclusion}
 
-Reading entropy either side of a grammar mask, we find the two readings can order
-inputs oppositely when the grammar arrives unannounced. The reversal is driven by
-the shape of the remainder the mask renormalises, not by how much it removes,
-which is near-identical across our two classes of input.
-
-Two findings together rule out a simple repair. Between the classes the readings
-are ordered oppositely. Within a class they are close to uncorrelated. A merely
-inverted quantity could be fixed by flipping its sign. This one cannot, because
-within a class there is little left to recover.
-
-The practical risk runs against intuition. A confidence filter passes low-entropy
-outputs as reliable, and under an unannounced grammar it is the benign prompts
-that produce the lowest observed entropy while being the ones the model was least
-settled about. Escalating the highest-entropy half of each cell, the two readings
-disagree about $56$ to $62\%$ of prompts against the $50\%$ two independent
-rankings would give. A real excess, but a modest one, and the same story the
-within-arm correlations tell.
-
-Our recommendation is small and cheap. Compute uncertainty against the model's own
-distribution where you can, and where you cannot, report retained mass beside it.
-It is available wherever the mask is and costs nothing to record. This is not a
-new estimator, only a statement about which distribution an existing one belongs
-to. It has a concrete consequence for serving stacks, because implementations
-that apply the mask inside a fused sampling kernel discard the model's own
-distribution before anything can look at it.
+Entropy read either side of a grammar mask can order inputs oppositely when the
+grammar arrives unannounced, driven by the shape of what survives rather than how
+much was removed. Between the classes the readings are reversed, within a class
+uncorrelated, so no sign flip recovers them. Counterintuitively it is the benign
+prompts that look most confident. Compute uncertainty against the model's own
+distribution where you can, and report retained mass beside it where you cannot,
+since fused sampling kernels discard it first.
 
 \section*{Limitations}
 
-We cover one grammar family, one harmful benchmark, fifty prompts per condition,
-two open-weight models of similar size, and a single decoding position. That last
-restriction is real and we do not dress it up: our own deeper measurements show
-the effect does not survive many forced tokens, so this is a claim about the
-first token of a constrained generation and not about a response. Whether it
-holds for other schema types or larger models is open. Closed-weight systems
-cannot be examined this way at all, since the method needs logits from before the
-constraint, a limitation shared by probabilistic uncertainty measurement in
-general \citep{steindl-etal-2024-linguistic}.
-
-At fifty prompts per arm the intervals are wide enough that individual AUROC
-values should not be compared with each other. We report each direction and
-whether the interval excludes $0.5$, and draw nothing from the differences
-between them. The paired shift is our primary statistic. Read alone the two
-entropies are weaker evidence, and in one of the four unannounced cells the
-interval for the served entropy touches $0.5$. Table~\ref{tab:main} gives means
-without a dispersion measure.
-
-Inference is in \texttt{bfloat16}. Retained mass is computed in log space, as
-$\log R_t = \mathrm{logsumexp}(z_{A_t}) - \mathrm{logsumexp}(z)$ on the logits
-$z$, which avoids the underflow a probability-space sum hits at these magnitudes.
-Precision then lives in the exponent, where a \texttt{bfloat16} logit is good to
-roughly $0.06$ nats, so a $35$-bit reading carries about $0.09$ bits either way.
-Absolute masses should be read as orders of magnitude.
-
-$P_{\text{refuse}}$ rests on a fixed English phrase set in one register. Its
-coverage on unconstrained generations is complete for both models, but whether a
-model's refusal vocabulary shifts inside a structured context is not testable
-from our artefacts, because the grammar stops a refusal being emitted at all.
-Retained mass carries no such dependence and shows the same pattern.
-
-\section*{Ethics Statement}
-
-We use harmful prompts from a public red-teaming benchmark and a published
-structured-output attack in order to create a setting where a model's preference
-is unambiguous. We introduce no new attack and report no attack success rates.
-Generated completions were inspected on screen during development and are not
-persisted. Released artefacts hold token identifiers and distributional
-statistics rather than decoded harmful text. We regard the finding that a
-standard decoding path discards a signal a safety-relevant system might rely on
-as defensively useful, since it points at a place where existing information
-could be kept rather than a new way to remove it.
+We cover one grammar, one benchmark, fifty prompts per condition, two open-weight
+models and a single position, and deeper measurements show the effect does not
+survive many forced tokens. At $n\!=\!50$ individual AUROC values should not be
+compared, one of four served-entropy intervals touches $0.5$, and
+\texttt{bfloat16} inference makes retained masses orders of magnitude only.
+Closed-weight systems cannot be examined at all, since the method needs logits
+from before the constraint \citep{steindl-etal-2024-linguistic}.
 
 \bibliography{custom}
 
