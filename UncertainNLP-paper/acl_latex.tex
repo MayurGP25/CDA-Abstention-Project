@@ -52,39 +52,47 @@ under constrained decoding.
 \section{Introduction}
 \label{sec:intro}
 
-Structured generation has become routine. Models are asked for JSON, for function
-calls, for tool arguments, and grammar-constrained decoding is how systems
-guarantee the output parses
-\citep{geng-etal-2023-grammar,willard-louf-2023-efficient,dong-etal-2024-xgrammar}.
-Those same systems often gate on a confidence signal, either to abstain, to
-escalate a query, or to flag a possible hallucination
-\citep{fadeeva-etal-2024-fact,gupta-etal-2024-cascades}. Both practices are
-ordinary, and their interaction is not well understood. The reason it matters is
-mechanical. A grammar mask sets the logits of violating tokens to $-\infty$ and
-renormalises what remains, so the distribution a downstream component can observe
-is not the one the model produced. It is that distribution restricted to whatever
-the schema allows. Prior work knows this restriction distorts sampling and
-proposes corrections for it
-\citep{park-etal-2024-grammar,reddy-etal-2026-dccd}. Nobody has asked what it does
-to an uncertainty estimate computed afterwards.
+Large language models are increasingly deployed not as chat interfaces but as
+components inside larger systems, where their output has to be machine-readable.
+A model asked for a JSON object, a function call or a set of tool arguments must
+produce something a parser will accept. To guarantee this, practitioners have
+adopted grammar-constrained decoding
+\citep{geng-etal-2023-grammar,willard-louf-2023-efficient,dong-etal-2024-xgrammar},
+in which a formal grammar is compiled into a per-token mask, applied at every
+step, so that the output is valid by construction.
 
-That question is for this community in particular. Entropy, perplexity and their
-monotone transforms are the instruments we use to decide when a model should be
-trusted. Our objective is to establish whether one of them still measures what it
-is taken to measure after a decoding-time transformation, and if not, to give a
-cheap way of telling.
+The same systems commonly attach a confidence estimate to what the model
+produces, in order to abstain, to escalate a query to a larger model, or to flag
+a possible hallucination
+\citep{fadeeva-etal-2024-fact,gupta-etal-2024-cascades}. Token-level entropy is
+the usual choice here, since it is cheap and needs only the distribution the
+decoder has already computed. However, under a constraint that distribution is no
+longer the model's own. It is the model's distribution restricted to whatever the
+schema admits and then renormalised. That this restriction distorts sampling is
+known, and has motivated corrections for it
+\citep{park-etal-2024-grammar,reddy-etal-2026-dccd}. What it does to an
+uncertainty estimate computed afterwards has, to our knowledge, not been asked.
 
-We take a single metric, the entropy of the next-token distribution, and read it
-twice: once from the model's own distribution and once from the masked one, at
-the same position and on the same prompts. When the grammar arrives unannounced
-the two readings can order inputs oppositely. Prompts on which the model has all
-but settled produce the highest observed entropy, so a system thresholding on
-what it can see recovers close to the reverse of the model's own state. What
-drives this is not the volume of probability the mask removes, which is almost
-identical for the two kinds of input we compare, but the shape of the small
-remainder that gets renormalised. Retained mass is therefore a diagnostic rather
-than an explanation. Where it is vanishing, the served entropy describes the
-schema more than the model. Where it is not, the two readings agree again.
+We argue that this question belongs to the uncertainty community in particular.
+Entropy, perplexity and their monotone transforms are the instruments with which
+we decide whether an output can be trusted. If one of them stops measuring what
+it is taken to measure after a routine decoding-time transformation, that is
+worth knowing, and a cheap way of telling when it has happened is worth having.
+
+Our approach is to take a single metric, the entropy of the next-token
+distribution, and read it at two points in the same pipeline: once from the
+model's own distribution and once from the masked one, at the same position and
+on the same prompts. The two readings therefore differ only in whether the mask
+has been applied. We find that when the grammar arrives unannounced, they order
+our two classes of input in opposite directions. Prompts on which the model has
+all but settled produce the highest observed entropy, so a system thresholding on
+what it can see recovers close to the reverse of the model's own state. Within a
+class, however, the two are not inverted but uncorrelated, and no sign flip
+recovers one from the other. What drives this is not the volume of probability
+the mask removes, which is almost identical for both classes, but the shape of
+the small remainder that gets renormalised. We therefore treat retained mass as a
+diagnostic rather than an explanation, and recommend reporting it alongside any
+uncertainty measured under a constraint.
 
 \section{Related Work}
 \label{sec:related}
@@ -100,16 +108,18 @@ diagnostic. \citet{fadeeva-etal-2024-fact} flag unsupported claims with it and
 sign has consequences downstream. Semantic methods such as semantic entropy
 \citep{kuhn-etal-2023-semantic} aggregate over sampled continuations instead.
 
-A recurring theme at this workshop is that a reported probability need not match
-the quantity a task requires. \citet{toney-wails-2025-certain} find token-level
-probabilities diverging from theoretical distributions,
-\citet{lovering-etal-2025-language} find them uncalibrated in numeric contexts,
-and \citet{durai-2025-phases} tracks confidence as
-$D_{\mathrm{KL}}(p \,\|\, u) = \log|V| - H(p)$ through a training phase where it
-rises while calibration worsens. \citet{steindl-etal-2024-linguistic} relate
-predictive uncertainty to jailbreak success at the sequence level. Ours is a
-result of the same kind, with the mismatch introduced at decoding time rather
-than during training or elicitation.
+A second line of work asks whether a reported probability corresponds to the
+quantity a task actually requires, and repeatedly finds that it does not.
+\citet{toney-wails-2025-certain} report token-level probabilities diverging from
+the theoretical distribution in explicitly probabilistic scenarios, and
+\citet{lovering-etal-2025-language} find them uncalibrated in numeric contexts.
+\citet{durai-2025-phases} tracks confidence as
+$D_{\mathrm{KL}}(p \,\|\, u) = \log|V| - H(p)$, a monotone function of entropy,
+through a phase of training in which it rises while calibration worsens, and
+\citet{steindl-etal-2024-linguistic} relate predictive uncertainty to jailbreak
+success at the sequence level. Our result is of the same kind. The difference is
+that the mismatch we report is introduced at decoding time, rather than during
+training or elicitation.
 
 On the decoding side, grammar-constrained decoding enforces structure without
 finetuning \citep{geng-etal-2023-grammar} and is now standard serving
