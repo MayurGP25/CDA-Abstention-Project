@@ -195,11 +195,15 @@ need not track how resolved it was overall (Figure~\ref{fig:swap}).
   {\includegraphics[width=\columnwidth]{fig1_distributions.pdf}}
   {\framebox[0.95\columnwidth]{\rule{0pt}{3.6cm}\textsc{[Figure 1: run experiments/fig1\_distributions.py]}}}
 \caption{Probability of the five admitted tokens at the first generated position,
-before and after masking, for one harmful and one benign prompt. On the harmful
-prompt the admitted tokens carry near-equal negligible mass, so renormalisation
-leaves them almost flat and the served entropy is high. On the benign prompt the
-model has a real preference among the same five tokens, which renormalisation
-preserves.}
+before and after masking, for one harmful and one benign prompt on Qwen2.5-7B
+under \textsc{none}. The tokens are the JSON opening brace and whitespace
+variants, where $+k$NL denotes $k$ trailing newlines. Each prompt is the one
+whose post-mask entropy is closest to its arm's median, so the panels show the
+typical case rather than a hand-picked one. Note the left axis is logarithmic.
+On the harmful prompt the admitted tokens carry near-equal negligible mass, so
+renormalisation leaves them almost flat and the served entropy is high. On the
+benign prompt the model has a real preference among the same five tokens, which
+renormalisation preserves.}
 \label{fig:swap}
 \end{figure}
 
