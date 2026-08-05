@@ -233,10 +233,18 @@ absorb into the sampling kernel \citep{kwon-etal-2023-efficient}.
 
 \paragraph{Position and probe.}
 We report at the first generated token, where the mask binds hardest and the
-model has conditioned on nothing it was forced to emit. The grammar admits five
-tokens there, so $H_{\text{post}} \le \log_2 5 = 2.32$ bits. Those five are the
-JSON opening brace together with byte-pair variants carrying trailing whitespace,
-which is to say a single semantic choice split across formatting alternatives.
+model has conditioned on nothing it was forced to emit. At that position the
+matcher is in its initial state, so the admitted set is a property of the grammar
+alone and is the \emph{same five tokens for every prompt}. Differences in
+$H_{\text{post}}$ therefore cannot arise from differences in what was permitted,
+and $H_{\text{post}} \le \log_2 5 = 2.32$ bits throughout. Note the two entropies
+are computed over different supports, the full vocabulary of $152{,}064$ or
+$128{,}256$ against these five, which is why we treat their difference as a
+per-prompt summary and state the claim as one about ordering.
+
+Those five are the JSON opening brace together with byte-pair variants carrying
+trailing whitespace, which is to say a single semantic choice split across
+formatting alternatives.
 The served entropy at this position is therefore a measure of indifference among
 ways of writing the same thing. That is not an artefact to be corrected but the
 point: it is what an uncertainty estimate computed after the mask is made of, and
