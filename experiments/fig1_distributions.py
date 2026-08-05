@@ -30,27 +30,48 @@ the prompts are identified by benchmark id only.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
 from pathlib import Path
 
-import numpy as np
-import torch
+_T0 = time.time()
+
+
+def step(msg):
+    """Progress with a wall clock, flushed.
+
+    Everything slow here is slow because it touches a network filesystem: the
+    torch and xgrammar imports, and then fifteen gigabytes of weights out of the
+    shared HF cache. Without these lines the script prints nothing for minutes
+    and is indistinguishable from a hang, which is exactly how it was first
+    reported.
+    """
+    print("[%6.1fs] %s" % (time.time() - _T0, msg), flush=True)
+
+
+step("importing torch and numpy")
+import numpy as np                                       # noqa: E402
+import torch                                             # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "experiments"))
 
+step("importing matplotlib and xgrammar")
 import matplotlib                                        # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt                          # noqa: E402
 import xgrammar as xgr                                   # noqa: E402
 
+step("importing project modules")
 from abstention import runner                            # noqa: E402
 from abstention.decode_loop import _bool_allowed         # noqa: E402
 from abstention.model_loader import encode_chat          # noqa: E402
 from abstention.prompting import build_messages          # noqa: E402
 from dump_all import load_all                            # noqa: E402
+step("imports done")
 
 C_HARM, C_BEN = "#B2182B", "#2166AC"
 
@@ -130,13 +151,20 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "UncertainNLP-paper" / "fig1_distributions.pdf"))
     args = ap.parse_args()
 
-    print("selecting representative prompts from measured data:")
+    step("selecting representative prompts from measured data")
     key = "qwen" if "qwen" in args.model.lower() else "llama"
     picks = pick_representative(args.cache, args.only, key)
     want_h = args.harmful_id or picks["harmful_forced"][0]
     want_b = args.benign_id or picks["benign_forced"][0]
 
+    # The long pause. Weights come off the shared cache, so this is minutes on a
+    # cold mount and seconds once the page cache is warm.
+    step("loading %s (this is the slow part, weights come off the shared cache)"
+         % args.model)
+    dev = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset, torch will pick>")
+    step("  CUDA_VISIBLE_DEVICES=%s" % dev)
     lm, grammar, schema, exp_cfg, _ = runner.setup(args.model)
+    step("model loaded on %s" % getattr(lm, "device", "?"))
     fmt = runner.format_instruction(exp_cfg)
     harmful = {p["id"]: p for p in runner.harmful_prompts(exp_cfg, args.bench)}
     benign = {p["id"]: p for p in runner.benign_prompts(exp_cfg)}
