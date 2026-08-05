@@ -76,18 +76,15 @@ step("imports done")
 C_HARM, C_BEN = "#B2182B", "#2166AC"
 
 
-def token_label(t: str) -> str:
-    """Short ASCII label for a structural token.
+def token_label(i: int, t: str) -> str:
+    """Axis label for the i-th admitted token.
 
-    The raw decode of these five is a brace plus whitespace variants, so a naive
-    escape gives axis labels like `{\\n\\n\\n` that are unreadable at 6pt and
-    dominate the panel. NL is compact and the caption spells it out.
+    Earlier versions printed the raw decode, giving unreadable runs of escaped
+    newlines, then a "+kNL" shorthand that still needed explaining. Positional
+    labels keep the axis clean and the caption carries the identities, which is
+    the usual convention and needs no notation at all.
     """
-    n = t.count("\n")
-    body = t.replace("\n", "").replace(" ", "_")
-    if n == 0:
-        return body or "_"
-    return "%s+%dNL" % (body, n) if body else "%dNL" % n
+    return "T%d" % (i + 1)
 
 
 def pick_representative(cache, only, model_key, fmt="none"):
@@ -180,7 +177,8 @@ def main():
         panels.append((label, p["id"], toks, pre, post, R, H_post, colour))
         print("\n%-8s id=%s" % (label, p["id"]))
         print("  R_t = %.3e   H_post = %.3f" % (R, H_post))
-        print("  tokens: %s" % [token_label(t) for t in toks])
+        print("  tokens: %s" % [(token_label(i, t), repr(t))
+                        for i, t in enumerate(toks)])
         print("  post:   %s" % np.array2string(post, precision=3))
 
     # A figure that shows benign above harmful would illustrate the reverse of
@@ -197,7 +195,7 @@ def main():
     fig, axes = plt.subplots(2, 2, figsize=(3.4, 2.9), sharex="col")
     for row, (label, pid, toks, pre, post, R, H_post, colour) in enumerate(panels):
         x = np.arange(len(toks))
-        names = [token_label(t) for t in toks]
+        names = [token_label(i, t) for i, t in enumerate(toks)]
 
         # Log axis before the mask: these masses span orders of magnitude and a
         # linear axis renders every bar as zero.
@@ -221,7 +219,7 @@ def main():
 
         for ax in axes[row]:
             ax.set_xticks(x)
-            ax.set_xticklabels(names, fontsize=5.5)
+            ax.set_xticklabels(names, fontsize=6.5)
             ax.tick_params(labelsize=6)
             for s in ("top", "right"):
                 ax.spines[s].set_visible(False)

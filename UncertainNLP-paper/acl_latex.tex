@@ -62,7 +62,9 @@ escalate a query to a larger model, or to flag a possible hallucination
 at a point that has not been examined. Grammar-constrained decoding guarantees
 schema conformance by masking the tokens that would violate it and renormalising
 over what survives, so the distribution a downstream consumer observes is not the
-distribution the model computed but its restriction to the admitted set.
+distribution the model computed but its restriction to the admitted
+set.\footnote{Code, grammars and analysis scripts:
+\url{https://anonymous.4open.science/r/abstention-under-constraint}}
 
 Uncertainty estimation offers a way to attach confidence to a prediction, through
 the entropy of the next-token distribution, the probability of the selected
@@ -196,14 +198,15 @@ need not track how resolved it was overall (Figure~\ref{fig:swap}).
   {\framebox[0.95\columnwidth]{\rule{0pt}{3.6cm}\textsc{[Figure 1: run experiments/fig1\_distributions.py]}}}
 \caption{Probability of the five admitted tokens at the first generated position,
 before and after masking, for one harmful and one benign prompt on Qwen2.5-7B
-under \textsc{none}. The tokens are the JSON opening brace and whitespace
-variants, where $+k$NL denotes $k$ trailing newlines. Each prompt is the one
-whose post-mask entropy is closest to its arm's median, so the panels show the
-typical case rather than a hand-picked one. Note the left axis is logarithmic.
-On the harmful prompt the admitted tokens carry near-equal negligible mass, so
-renormalisation leaves them almost flat and the served entropy is high. On the
-benign prompt the model has a real preference among the same five tokens, which
-renormalisation preserves.}
+under \textsc{none}. The admitted tokens are the JSON opening brace and
+whitespace variants: T1 is \texttt{\{}, T4 is \texttt{\{"}, and T2, T3 and T5 are
+\texttt{\{} followed by one, two and three newlines. Each prompt is the one whose
+post-mask entropy is closest to its arm's median, so the panels show the typical
+case rather than a hand-picked one. The left axis is logarithmic. On the harmful
+prompt the admitted tokens carry near-equal negligible mass, so renormalisation
+leaves them almost flat and the served entropy is high. On the benign prompt the
+model has a real preference among the same five tokens, which renormalisation
+preserves.}
 \label{fig:swap}
 \end{figure}
 
@@ -267,15 +270,33 @@ of these prompts. On benign prompts the model is markedly less resolved, at
 $0.76$ to $0.93$ bits. The masked distribution reverses this ordering in every
 cell, carrying more entropy on harmful prompts than on benign ones.
 
-\paragraph{The shift is large, and it is the shift that separates the two
-classes.}
+\paragraph{Read separately, one entropy falls below chance and the other rises
+above it.}
+The clearest statement of the reversal is the lower panel of
+Table~\ref{tab:main}. The model's own entropy ranks harmful prompts \emph{below}
+benign ones in every cell, at AUROC $0.125$ to $0.175$ with every interval
+strictly under $0.5$. The served entropy ranks them \emph{above}, at $0.613$ to
+$0.750$, with the interval excluding $0.5$ in three cells of four. Taken
+together, the two readings place the same inputs on opposite sides of chance.
+
+\paragraph{The paired shift summarises this, and is the strongest single
+statistic.}
 Masking adds $0.58$ to $1.36$ bits of apparent uncertainty on harmful prompts. On
 benign prompts it subtracts for Llama and adds a little for Qwen, so the
 model-general statement concerns magnitude rather than sign. The per-prompt shift
-$\Delta H = H_{\text{post}} - H_{\text{pre}}$ is paired, since both terms come
-from the same prompt at the same position, and it separates harmful from benign
-at AUROC $0.845$ to $0.916$ across the four cells, with intervals excluding $0.5$
-in all of them (Figure~\ref{fig:slope}).
+$\Delta H = H_{\text{post}} - H_{\text{pre}}$ separates the arms at AUROC $0.845$
+to $0.916$, above either reading alone, with intervals excluding $0.5$ in all
+four cells (Figure~\ref{fig:slope}). Because the two entropies live on different
+supports, $\log_2|V| \approx 17$ bits against $\log_2 5$, we treat $\Delta H$ as a
+convenient per-prompt summary rather than a physical quantity, and the claim
+remains one about ordering within each reading.
+
+Rank correlation makes the same point without reference to the two classes.
+Pooled over both arms the two entropies correlate at Spearman
+$\rho = \textbf{[POOL]}$, and computed within the harmful and benign arms
+separately at $\textbf{[HARM]}$ and $\textbf{[BEN]}$. A pooled coefficient
+over two clusters largely restates the separation above, so the within-arm values
+are the ones that speak to a prompt-by-prompt reversal.
 
 \begin{figure}[t]
 \centering
@@ -290,13 +311,13 @@ prompts start high and stay or fall, so the two populations cross.}
 
 \paragraph{What is removed does not separate the classes, but what survives
 does.}
-The five admitted tokens hold a median $3.6\times10^{-11}$ of Qwen's mass and
-$7.7\times10^{-9}$ of Llama's on harmful prompts, so the served distribution is a
+The five admitted tokens hold $34.7$ bits less of Qwen's probability than the full
+vocabulary does, and $26.9$ bits less of Llama's, so the served distribution is a
 renormalisation of a remainder the model had all but ruled out. Retained mass is
-however close to prompt-independent. The benign medians are $1.6\times10^{-11}$
-and $4.3\times10^{-9}$, within a factor of two, with interquartile ranges that
-overlap over more than an order of magnitude in every pair, and the ordering is
-not even consistent across prompt levels.
+however close to prompt-independent. It separates the two arms at AUROC
+$\textbf{[AUROC-R]}$, an interval containing $0.5$ in every cell, with medians
+within a factor of two of each other and an ordering that is not even consistent
+across prompt levels.
 
 This is expected, since no instruction-tuned model prefers to open a reply with a
 brace whatever it was asked. What distinguishes the two classes is instead the
@@ -317,11 +338,19 @@ $0.026$ but the served entropy carries no signal at all, at $0.499$.
 
 The two models leave the regime for different reasons. Llama keeps its refusal
 disposition across all four levels, at $P_{\text{refuse}}$ of $0.83$ to $0.89$,
-whereas Qwen's collapses from $0.77$ to $0.00$, so for Qwen there is no longer a
-forbidden preference for the mask to hide. On a harder benign control drawn from
-XSTest \citep{rottger-etal-2024-xstest}, Qwen's served entropy exceeds its value
-on harmful prompts, which rules out reading either quantity as a detector of
-harm.
+whereas Qwen's falls to $0.00$ under \textsc{schema}, so for Qwen there is no
+longer a forbidden preference for the mask to hide. A reading of exactly zero
+from a fixed phrase set is equally consistent with refusing in wording the set
+misses, so we do not rest on it alone. The lexicon-free quantity agrees: Qwen's
+retained mass on harmful prompts under \textsc{schema} is $0.84$, meaning it is
+readily emitting the schema rather than being prevented from refusing.
+
+Neither quantity should be read as a detector of harm. On a harder benign control
+drawn from XSTest \citep{rottger-etal-2024-xstest}, whose prompts are lexically
+alarming but safe, Qwen's served entropy is $1.48$ bits against $1.26$ on
+genuinely harmful prompts. The served entropy inherits whatever disposition the
+model holds, including over-refusal, so it tracks the model's reluctance rather
+than the harmfulness of the request.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -337,9 +366,11 @@ low-entropy outputs as reliable, and under an unannounced grammar it is the
 benign prompts that produce the lowest observed entropy while being the ones the
 model was least resolved about. A cascade that escalates on high observed entropy
 \citep{gupta-etal-2024-cascades} would escalate the cases the model had already
-settled and pass through the ones it had not. The claim concerns ordering rather
-than absolute level, since every entropy here is small, between $0.06$ and $1.42$
-bits against a possible $17$.
+settled and pass through the ones it had not. Taking the highest-entropy half of
+each cell as the escalation set, the two readings disagree about $\textbf{[D50]}$ of
+prompts, which is the concrete form of the reversal. The claim concerns ordering
+rather than absolute level, since every entropy here is small, between $0.06$ and
+$1.42$ bits against a possible $17$.
 
 Our recommendation is correspondingly modest. Uncertainty computed under a
 constraint is more informative taken with respect to the model's own

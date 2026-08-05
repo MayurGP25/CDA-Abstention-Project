@@ -1,39 +1,45 @@
-% PLACEHOLDER, holding the validated means. Regenerate from the artefacts with
+% PLACEHOLDER, holding the validated values. Regenerate with
 %     python3 experiments/paper_table.py --only fmt2
-% which adds the standard deviations. Those are the only numbers not yet
-% measured, so they are absent here rather than invented.
-%
-% Do not write this file through a shell heredoc. Doing so ate one level of
-% backslash, turning every `\\` row terminator into `\`, which detached the
-% header row and produced a "Misplaced \noalign" cascade at the first \midrule.
+% Do not edit through a shell heredoc: it collapses `\\` to `\`, which detaches
+% the header row and gives a "Misplaced \noalign" cascade at the first \midrule.
 \begin{table}[t]
 \centering
 \small
-\setlength{\tabcolsep}{3.5pt}
+\setlength{\tabcolsep}{3pt}
 \begin{tabular}{llrrrr}
 \toprule
-Level & Arm & $H_{\text{pre}}$ & $H_{\text{post}}$ & $\Delta H$ & $R_t$ \\
+ & & Pre-mask & Post-mask & & $-\log_2$ \\
+Level & Arm & entropy & entropy & $\Delta H$ & $R_t$ \\
 \midrule
 \multicolumn{6}{l}{\emph{Qwen2.5-7B}} \\
-\textsc{none}    & harmful & \textbf{0.07} & \textbf{1.26} & $\mathbf{+1.18}$ & $3.6{\times}10^{-11}$ \\
-                 & benign  & 0.76 & 1.08 & $+0.33$ & $1.6{\times}10^{-11}$ \\
-\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & $\mathbf{+1.36}$ & $7.4{\times}10^{-12}$ \\
-                 & benign  & 0.81 & 1.06 & $+0.25$ & $9.5{\times}10^{-12}$ \\
+\textsc{none}    & harmful & \textbf{0.07} & \textbf{1.26} & $\mathbf{+1.18}$ & \textbf{34.7} \\
+                 & benign  & 0.76 & 1.08 & $+0.33$ & 35.9 \\
+\textsc{neutral} & harmful & \textbf{0.06} & \textbf{1.42} & $\mathbf{+1.36}$ & \textbf{37.0} \\
+                 & benign  & 0.81 & 1.06 & $+0.25$ & 36.6 \\
 \midrule
 \multicolumn{6}{l}{\emph{Llama-3.1-8B}} \\
-\textsc{none}    & harmful & \textbf{0.21} & \textbf{0.79} & $\mathbf{+0.58}$ & $7.7{\times}10^{-9}$ \\
-                 & benign  & 0.93 & 0.58 & $-0.35$ & $4.3{\times}10^{-9}$ \\
-\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & $\mathbf{+0.85}$ & $1.2{\times}10^{-9}$ \\
-                 & benign  & 0.92 & 0.70 & $-0.23$ & $1.5{\times}10^{-9}$ \\
+\textsc{none}    & harmful & \textbf{0.21} & \textbf{0.79} & $\mathbf{+0.58}$ & \textbf{26.9} \\
+                 & benign  & 0.93 & 0.58 & $-0.35$ & 27.8 \\
+\textsc{neutral} & harmful & \textbf{0.11} & \textbf{0.97} & $\mathbf{+0.85}$ & \textbf{29.6} \\
+                 & benign  & 0.92 & 0.70 & $-0.23$ & 29.4 \\
+\midrule
+\multicolumn{6}{l}{\emph{AUROC, harmful against benign}} \\
+\midrule
+Qwen2.5-7B & \textsc{none}    & 0.158 & 0.613 & \textbf{0.856} & \\
+Qwen2.5-7B & \textsc{neutral} & 0.157 & 0.750 & \textbf{0.916} & \\
+Llama-3.1-8B & \textsc{none}    & 0.175 & 0.690 & \textbf{0.845} & \\
+Llama-3.1-8B & \textsc{neutral} & 0.125 & 0.728 & \textbf{0.898} & \\
 \bottomrule
 \end{tabular}
-\caption{Entropy in bits at the first generated token, means over $n=50$ prompts
-per arm.
-$\Delta H$ is the per-prompt shift $H_{\text{post}} - H_{\text{pre}}$. $R_t$ is
-the median retained mass. $|A_t| = 5$ throughout, so
-$H_{\text{post}} \le \log_2 5 = 2.32$. AUROC of $\Delta H$ separating the two
-arms is $0.856$ $[0.77, 0.92]$, $0.916$ $[0.86, 0.96]$, $0.845$ $[0.76, 0.92]$
-and $0.898$ $[0.83, 0.95]$ in row order. Note that $R_t$ barely differs between
-arms while the two entropies order them oppositely.}
+\caption{Entropy in bits at the first generated token, means over $n\!=\!50$
+prompts per arm, with $-\log_2 R_t$ as the median. $\Delta H = H_{\text{post}} -
+H_{\text{pre}}$ is the per-prompt shift, paired within a prompt. It is a summary
+rather than a physical quantity, since the two entropies live on different
+supports. $-\log_2 R_t$ is the divergence of the served distribution from the
+model's own in bits, and larger means less of the model's probability survives
+the mask. $|A_t| = 5$ throughout, so the post-mask entropy cannot exceed
+$\log_2 5 = 2.32$. In the lower panel the pre-mask column lies below $0.5$ and
+the post-mask column above it in every cell, which is the reversal. Intervals are
+given in the text.}
 \label{tab:main}
 \end{table}
