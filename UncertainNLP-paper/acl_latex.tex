@@ -187,26 +187,7 @@ carry little mass in roughly equal amounts, so renormalising them yields a
 markedly flatter distribution. A genuine preference among the admitted tokens, by
 contrast, survives renormalisation intact. The served entropy reports how
 indifferent the model was among the tokens the grammar happened to allow, which
-need not track how resolved it was overall (Figure~\ref{fig:swap}).
-
-\begin{figure}[t]
-\centering
-\IfFileExists{fig1_distributions.pdf}
-  {\includegraphics[width=\columnwidth]{fig1_distributions.pdf}}
-  {\framebox[0.95\columnwidth]{\rule{0pt}{3.6cm}\textsc{[Figure 1: run experiments/fig1\_distributions.py]}}}
-\caption{Probability of the five admitted tokens at the first generated position,
-before and after masking, averaged over all fifty prompts in each arm on
-Qwen2.5-7B under \textsc{none}. The admitted tokens are the JSON opening brace
-and whitespace variants: T1 is \texttt{\{}, T4 is \texttt{\{"}, and T2, T3 and T5
-are \texttt{\{} followed by one, two and three newlines. Bars are means and
-whiskers the interquartile range across prompts. The left axis is logarithmic.
-Before the mask both arms sit ten to twelve orders of magnitude below one. After
-it, the harmful arm spreads its mass more evenly across the admitted tokens than
-the benign arm does, which is the difference in served entropy. The averaging is
-necessary rather than cosmetic, since the two entropies are close to uncorrelated
-within an arm and no single prompt exhibits the effect.}
-\label{fig:swap}
-\end{figure}
+need not track how resolved it was overall.
 
 \section{Measuring before and after the mask}
 \label{sec:setup}
@@ -337,8 +318,8 @@ across prompt levels.
 
 This is expected, since no instruction-tuned model prefers to open a reply with a
 brace whatever it was asked. What distinguishes the two classes is instead the
-shape of what survives, as Equation~\ref{eq:decomp} describes and
-Figure~\ref{fig:swap} shows. Two orders of magnitude separate Llama's retained
+shape of what survives, as Equation~\ref{eq:decomp} describes. Two orders of
+magnitude separate Llama's retained
 mass from Qwen's and both show the reversal, so the effect does not depend on the
 precise magnitude, and $H_{\text{post}}$ occupies between $25\%$ and $61\%$ of
 its ceiling rather than sitting pinned against it.
