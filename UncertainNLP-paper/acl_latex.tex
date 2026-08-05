@@ -234,8 +234,13 @@ absorb into the sampling kernel \citep{kwon-etal-2023-efficient}.
 \paragraph{Position and probe.}
 We report at the first generated token, where the mask binds hardest and the
 model has conditioned on nothing it was forced to emit. The grammar admits five
-tokens there, the JSON opening brace and whitespace variants, so
-$H_{\text{post}} \le \log_2 5 = 2.32$ bits. The claim needs a preference that is
+tokens there, so $H_{\text{post}} \le \log_2 5 = 2.32$ bits. Those five are the
+JSON opening brace together with byte-pair variants carrying trailing whitespace,
+which is to say a single semantic choice split across formatting alternatives.
+The served entropy at this position is therefore a measure of indifference among
+ways of writing the same thing. That is not an artefact to be corrected but the
+point: it is what an uncertainty estimate computed after the mask is made of, and
+it is unrelated to whether the model had settled on what to say. The claim needs a preference that is
 strong, identifiable and structurally forbidden, and a safety-aligned model given
 a harmful request supplies all three. The framing is instrumental, we introduce
 no attack and report no attack success rates, and the mechanism should apply
@@ -365,6 +370,12 @@ two can rank inputs in opposite orders whenever the grammar arrives unannounced.
 The reversal is driven not by how much probability the mask removes, which is
 near-identical across our two input classes, but by the shape of the remainder it
 renormalises.
+
+Two observations together rule out a simple repair. Between the classes the two
+readings are ordered oppositely, and within a class they are close to
+uncorrelated. A quantity that were merely inverted could be recovered by
+reversing its sign, but no monotone function of the served entropy recovers the
+model's own, because within a class there is little to recover.
 
 The practical risk runs opposite to intuition. A confidence filter passes
 low-entropy outputs as reliable, and under an unannounced grammar it is the
